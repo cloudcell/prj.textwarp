@@ -309,6 +309,12 @@ class TextAdventure:
         # Handle menu input if in menu
         if self.in_menu:
             self.handle_menu_input(key)
+            # Clear any key states to prevent movement when exiting menu
+            for k in self.key_states:
+                self.key_states[k] = False
+            # Reset movement direction
+            self.dx = 0
+            self.dy = 0
             return
         
         # Toggle menu with ESC key
@@ -317,6 +323,12 @@ class TextAdventure:
             self.current_menu = "main"
             self.menu_selection = 0
             self.needs_redraw = True
+            # Clear any key states to prevent movement when entering menu
+            for k in self.key_states:
+                self.key_states[k] = False
+            # Reset movement direction
+            self.dx = 0
+            self.dy = 0
             return
             
         # Update key states based on key press/release
@@ -447,42 +459,41 @@ class TextAdventure:
         dt = current_time - self.last_update
         self.last_update = current_time
         
-        # Skip updates if in menu
-        if self.in_menu:
-            return
+        # Skip game world updates if in menu, but still update plugins
+        # This allows snakes to continue moving while in menu
+        if not self.in_menu:
+            # Check if message timeout has expired
+            if self.message_timeout > 0 and current_time > self.message_timeout:
+                self.message = ""
+                self.message_timeout = 0
+                self.needs_redraw = True
+            
+            # Simulate key release after a short time
+            # This allows for diagonal movement by pressing keys in sequence
+            for key in self.key_states:
+                if self.key_states[key]:
+                    self.key_states[key] = False  # Auto-release keys
+            
+            # Accumulate movement (for smooth continuous movement if needed)
+            self.acc_x += self.dx * self.move_speed * dt
+            self.acc_y += self.dy * self.move_speed * dt
+            
+            # Apply accumulated movement when it reaches at least 1 cell
+            if abs(self.acc_x) >= 1:
+                move_x = int(self.acc_x)
+                self.world_x += move_x
+                self.acc_x -= move_x  # Keep remainder for next update
+                self.needs_redraw = True
+                
+            if abs(self.acc_y) >= 1:
+                move_y = int(self.acc_y)
+                self.world_y += move_y
+                self.acc_y -= move_y  # Keep remainder for next update
+                self.needs_redraw = True
         
-        # Check if message timeout has expired
-        if self.message_timeout > 0 and current_time > self.message_timeout:
-            self.message = ""
-            self.message_timeout = 0
-            self.needs_redraw = True
-        
-        # Update plugins
+        # Update plugins even when in menu
         for plugin in self.plugins:
             plugin.update(dt)
-        
-        # Simulate key release after a short time
-        # This allows for diagonal movement by pressing keys in sequence
-        for key in self.key_states:
-            if self.key_states[key]:
-                self.key_states[key] = False  # Auto-release keys
-        
-        # Accumulate movement (for smooth continuous movement if needed)
-        self.acc_x += self.dx * self.move_speed * dt
-        self.acc_y += self.dy * self.move_speed * dt
-        
-        # Apply accumulated movement when it reaches at least 1 cell
-        if abs(self.acc_x) >= 1:
-            move_x = int(self.acc_x)
-            self.world_x += move_x
-            self.acc_x -= move_x  # Keep remainder for next update
-            self.needs_redraw = True
-            
-        if abs(self.acc_y) >= 1:
-            move_y = int(self.acc_y)
-            self.world_y += move_y
-            self.acc_y -= move_y  # Keep remainder for next update
-            self.needs_redraw = True
 
     def render(self):
         # Only redraw if needed
@@ -491,10 +502,20 @@ class TextAdventure:
             
         self.screen.clear()
         
+        # Draw the game world first (even when menu is active)
+        self.render_game_world()
+        
+        # Draw menu on top if active
         if self.in_menu:
             self.render_menu()
-            return
+            
+        # Update screen
+        self.screen.refresh()
         
+        # Reset redraw flag
+        self.needs_redraw = False
+
+    def render_game_world(self):
         # Calculate player position at center of screen
         player_screen_y = self.max_y // 2
         player_screen_x = self.max_x // 2
@@ -569,14 +590,20 @@ class TextAdventure:
         self.screen.addstr(0, 0, " " * (self.max_x - 1), self.menu_color)
         menu_text = "TextWarp Adventure | Press ESC for Menu"
         self.screen.addstr(0, (self.max_x - len(menu_text)) // 2, menu_text, self.menu_color)
-        
-        # Update screen
-        self.screen.refresh()
-        
-        # Reset redraw flag
-        self.needs_redraw = False
 
     def render_menu(self):
+        # Draw semi-transparent overlay
+        for y in range(1, self.max_y - 2):
+            for x in range(self.max_x - 1):
+                # Get current character at this position
+                try:
+                    char = chr(self.screen.inch(y, x) & 0xFF)
+                    # Draw a semi-transparent overlay (darken the background)
+                    if char != ' ':
+                        self.screen.addch(y, x, char, curses.A_DIM)
+                except:
+                    pass
+        
         # Draw menu background
         menu_width = 40
         menu_height = len(self.menus[self.current_menu]) + 4
@@ -603,9 +630,6 @@ class TextAdventure:
                 self.screen.addstr(menu_y + i + 3, menu_x + 2, "> " + item + " <", self.menu_color | curses.A_BOLD)
             else:
                 self.screen.addstr(menu_y + i + 3, menu_x + 4, item, self.menu_color)
-        
-        # Update screen
-        self.screen.refresh()
 
     def cleanup(self):
         # Clean up curses
