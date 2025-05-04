@@ -839,6 +839,13 @@ class GUI3DPlugin(Plugin):
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
+        # Get audio plugin for beat synchronization
+        audio_plugin = None
+        for plugin in self.game.plugins:
+            if plugin.__class__.__name__ == "AudioPlugin" and plugin.active:
+                audio_plugin = plugin
+                break
+        
         # Draw each snake
         for snake_idx, snake in enumerate(self.snakes):
             # Skip empty snakes
@@ -879,6 +886,17 @@ class GUI3DPlugin(Plugin):
                 # Position the sphere
                 glTranslatef(pos[0], pos[1], pos[2])  # Use the correct position coordinates
                 
+                # Get audio intensity for this snake (if audio plugin is active)
+                intensity = 1.0
+                if audio_plugin and segment_type == 'head':
+                    intensity = audio_plugin.get_snake_head_intensity(snake_idx)
+                    # Make the head pulse with the music
+                    color = (
+                        min(1.0, color[0] * (0.5 + 1.0 * intensity)),
+                        min(1.0, color[1] * (0.5 + 1.0 * intensity)),
+                        min(1.0, color[2] * (0.5 + 1.0 * intensity))
+                    )
+                
                 # Set material properties for better lighting
                 glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, (color[0], color[1], color[2], 1.0))
                 glMaterialfv(GL_FRONT, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
@@ -889,7 +907,16 @@ class GUI3DPlugin(Plugin):
                 
                 # Draw a sphere with appropriate size based on segment type
                 if segment_type == 'head':
-                    radius = 0.6  # Larger head
+                    # Make heads pulse with the music
+                    radius = 0.6  # Base size for head
+                    if audio_plugin:
+                        # Scale the radius based on audio intensity
+                        radius *= 0.8 + 0.4 * intensity
+                    
+                    # Add glow effect that changes with the music
+                    if audio_plugin:
+                        glow_intensity = intensity * 0.5
+                        glMaterialfv(GL_FRONT, GL_EMISSION, (glow_intensity, glow_intensity * 0.5, 0.0, 1.0))
                 elif segment_type == 'rattle':
                     radius = 0.5  # Medium rattles
                     # Add a pulsing effect to rattles to make them more noticeable

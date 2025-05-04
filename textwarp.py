@@ -13,6 +13,7 @@ from plugins.graph_classifier import GraphClassifierPlugin
 from plugins.network import NetworkPlugin
 from plugins.gui_3d import GUI3DPlugin
 from plugins.polygraph_3d import Polygraph3DPlugin
+from plugins.audio import AudioPlugin
 import copy
 
 class TextAdventure:
@@ -114,7 +115,7 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "3D Visualization Settings", "Location Settings", "Network", "Exit"],
+            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "3D Visualization Settings", "Location Settings", "Network", "Audio Settings", "Exit"],
             "plugins": [],  # Will be populated with plugin names
             "location": ["Start at Last Location: " + ("Yes" if self.start_at_last_location else "No"), 
                          "Save Current Location", 
@@ -140,6 +141,7 @@ class TextAdventure:
         self.plugins.append(NetworkPlugin(self))
         self.plugins.append(GUI3DPlugin(self))
         self.plugins.append(Polygraph3DPlugin(self))
+        self.plugins.append(AudioPlugin(self))  # Add the new AudioPlugin
         
         # Update plugin menu
         self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
@@ -446,7 +448,18 @@ class TextAdventure:
                     # Return to menu mode
                     self.in_menu = True
                     self.needs_redraw = True
-            elif self.menu_selection == 7:  # Exit
+            elif self.menu_selection == 7:  # Audio Settings
+                # Temporarily exit menu mode
+                self.in_menu = False
+                self.needs_redraw = True
+                
+                # Show audio settings menu
+                self.show_audio_settings_menu()
+                
+                # Return to menu mode
+                self.in_menu = True
+                self.needs_redraw = True
+            elif self.menu_selection == 8:  # Exit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
@@ -1246,6 +1259,27 @@ class TextAdventure:
                 }, f)
         except:
             pass  # Ignore errors if the file can't be written
+
+    def show_audio_settings_menu(self):
+        """Show the audio settings menu."""
+        # Find the audio plugin
+        audio_plugin = None
+        for plugin in self.plugins:
+            if isinstance(plugin, AudioPlugin):
+                audio_plugin = plugin
+                break
+                
+        if not audio_plugin:
+            self.message = "Audio plugin not found!"
+            self.message_timeout = 3.0
+            return
+            
+        # Make sure the plugin is active
+        if not audio_plugin.active:
+            audio_plugin.activate()
+            
+        # Show the audio menu
+        audio_plugin.show_audio_menu()
 
 def main():
     """Main function to run the game."""
