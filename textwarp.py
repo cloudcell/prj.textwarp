@@ -571,6 +571,15 @@ class TextAdventure:
                 except:
                     pass  # Ignore errors from writing to the bottom-right corner
         
+        # Draw player at center of screen
+        player_y = self.max_y // 2
+        player_x = self.max_x // 2
+        
+        try:
+            self.screen.addch(player_y, player_x, self.player_char, self.player_color | curses.A_BOLD)
+        except:
+            pass  # Ignore errors from writing to the bottom-right corner
+        
         # Draw player position and fuel info at the bottom
         status_line = f"Top-Left: ({self.world_x - half_width + notch_left_margin}, {self.world_y - half_height + notch_top_margin}) | X: ({self.world_x}, {self.world_y}) | Dir: {self.dx},{self.dy} | Fuel: {self.fuel}"
         try:
