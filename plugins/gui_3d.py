@@ -58,6 +58,7 @@ class GUI3DPlugin(Plugin):
         self.dragging = False
         self.font_texture = None
         self.char_textures = {}
+        self.lock = threading.Lock()  # Lock for thread safety
         
     @property
     def name(self):
@@ -102,7 +103,8 @@ class GUI3DPlugin(Plugin):
             return
             
         # Clear existing characters
-        self.characters = {}
+        with self.lock:
+            self.characters = {}
         
         # Get visible area dimensions
         max_y, max_x = self.game.max_y, self.game.max_x
@@ -124,28 +126,37 @@ class GUI3DPlugin(Plugin):
                 # Determine color based on character
                 color = self.get_color_for_char(char, world_x, world_y)
                 
-                # Create 3D character
-                self.characters[(world_x, world_y)] = Character3D(char, world_x, world_y, color)
-                
-        # Add player character
-        player_x = self.game.world_x
-        player_y = self.game.world_y
-        self.characters[(player_x, player_y)] = Character3D('X', player_x, player_y, (1.0, 0.0, 0.0, 1.0))
+                # Create 3D character - use relative coordinates to keep player at center
+                with self.lock:
+                    self.characters[(world_x, world_y)] = Character3D(
+                        char, 
+                        world_x - self.game.world_x,  # Relative X position
+                        world_y - self.game.world_y,  # Relative Y position
+                        color
+                    )
+        
+        # Add player character at center (0,0)
+        with self.lock:
+            self.characters[(0, 0)] = Character3D('X', 0, 0, (1.0, 0.0, 0.0, 1.0))
         
         # Add remote players if networking is active
         for plugin in self.game.plugins:
             if hasattr(plugin, 'players') and plugin.active:
                 for player in plugin.players.values():
-                    self.characters[(player.x, player.y)] = Character3D('O', player.x, player.y, (0.0, 1.0, 0.0, 1.0))
+                    # Convert to relative coordinates
+                    rel_x = player.x - self.game.world_x
+                    rel_y = player.y - self.game.world_y
+                    with self.lock:
+                        self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
                     
         # Add snakes if snake plugin is active
         for plugin in self.game.plugins:
             if hasattr(plugin, 'snakes') and plugin.active:
                 for snake in plugin.snakes:
                     for i, (sx, sy) in enumerate(snake.body):
-                        # Convert to world coordinates
-                        world_sx = sx + self.game.world_x
-                        world_sy = sy + self.game.world_y
+                        # Convert to relative coordinates
+                        rel_x = sx + self.game.world_x - self.game.world_x  # Simplifies to sx
+                        rel_y = sy + self.game.world_y - self.game.world_y  # Simplifies to sy
                         
                         # Head is different color than body
                         if i == 0:
@@ -157,7 +168,8 @@ class GUI3DPlugin(Plugin):
                         if i >= len(snake.body) - snake.rattles:
                             color = (0.8, 0.0, 0.0, 1.0)  # Red for rattles
                             
-                        self.characters[(world_sx, world_sy)] = Character3D('S', world_sx, world_sy, color)
+                        with self.lock:
+                            self.characters[(rel_x, rel_y)] = Character3D('S', rel_x, rel_y, color)
     
     def get_color_for_char(self, char, x, y):
         """Get the color for a character."""
@@ -331,12 +343,29 @@ class GUI3DPlugin(Plugin):
             
         glEnd()
         
+        # Draw a special marker at the center (0,0) to indicate player position
+        glBegin(GL_LINES)
+        glColor3f(1.0, 0.0, 0.0)  # Red
+        
+        # X marker
+        marker_size = 0.5
+        glVertex3f(-marker_size, 0, -marker_size)
+        glVertex3f(marker_size, 0, marker_size)
+        glVertex3f(-marker_size, 0, marker_size)
+        glVertex3f(marker_size, 0, -marker_size)
+        
+        glEnd()
+        
     def draw_characters(self):
         """Draw all characters in the 3D world."""
         # Enable texturing
         glEnable(GL_TEXTURE_2D)
         
-        for char_obj in self.characters.values():
+        # Make a copy of the characters dictionary to avoid modification during iteration
+        with self.lock:
+            characters_copy = dict(self.characters)
+        
+        for char_obj in characters_copy.values():
             # Set character position
             glPushMatrix()
             glTranslatef(char_obj.x, char_obj.height / 2, char_obj.y)  # Y is up in OpenGL
