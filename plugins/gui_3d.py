@@ -696,6 +696,7 @@ class GUI3DPlugin(Plugin):
                 
                 # Get heights for each corner
                 heights = []
+                corner_positions = []
                 for cx, cz in corners:
                     grid_key = f"{cx},{cz}"
                     if grid_key in grid_points:
@@ -719,12 +720,19 @@ class GUI3DPlugin(Plugin):
                         else:
                             # No neighbors, use zero
                             heights.append(0)
+                    
+                    corner_positions.append((cx, cz))
                 
                 # Only draw triangles if we have valid heights for all corners
                 if len(heights) == 4:
-                    # Calculate colors based on height and selected color scheme
+                    # Calculate the midpoint position and height (average of the four corners)
+                    mid_x = (corners[0][0] + corners[1][0] + corners[2][0] + corners[3][0]) / 4
+                    mid_z = (corners[0][1] + corners[1][1] + corners[2][1] + corners[3][1]) / 4
+                    mid_height = sum(heights) / 4
+                    
+                    # Calculate colors for all points including the midpoint
                     colors = []
-                    for h in heights:
+                    for h in heights + [mid_height]:  # Add midpoint height
                         # Get RGB color based on height and color scheme
                         rgb = self.get_color_from_scheme(h, self.terrain_color_scheme)
                         
@@ -734,48 +742,89 @@ class GUI3DPlugin(Plugin):
                         else:
                             colors.append((*rgb, self.terrain_mesh_opacity))  # User-controlled transparency
                     
-                    # Draw two triangles to form a quad
-                    # Triangle 1: Bottom-left, Bottom-right, Top-left
+                    # Draw four triangles connecting each corner to the midpoint
                     if self.terrain_mesh_style == "filled":
                         # Use RGBA for filled mode with transparency
+                        # Triangle 1: Bottom-left to midpoint to Bottom-right
                         glColor4f(*colors[0])
                         glVertex3f(corners[0][0], heights[0], corners[0][1])
                         
+                        glColor4f(*colors[4])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
+                        
                         glColor4f(*colors[1])
                         glVertex3f(corners[1][0], heights[1], corners[1][1])
                         
-                        glColor4f(*colors[2])
-                        glVertex3f(corners[2][0], heights[2], corners[2][1])
-                        
-                        # Triangle 2: Bottom-right, Top-right, Top-left
+                        # Triangle 2: Bottom-right to midpoint to Top-right
                         glColor4f(*colors[1])
                         glVertex3f(corners[1][0], heights[1], corners[1][1])
+                        
+                        glColor4f(*colors[4])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
                         
                         glColor4f(*colors[3])
                         glVertex3f(corners[3][0], heights[3], corners[3][1])
                         
+                        # Triangle 3: Top-right to midpoint to Top-left
+                        glColor4f(*colors[3])
+                        glVertex3f(corners[3][0], heights[3], corners[3][1])
+                        
+                        glColor4f(*colors[4])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
+                        
                         glColor4f(*colors[2])
                         glVertex3f(corners[2][0], heights[2], corners[2][1])
+                        
+                        # Triangle 4: Top-left to midpoint to Bottom-left
+                        glColor4f(*colors[2])
+                        glVertex3f(corners[2][0], heights[2], corners[2][1])
+                        
+                        glColor4f(*colors[4])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
+                        
+                        glColor4f(*colors[0])
+                        glVertex3f(corners[0][0], heights[0], corners[0][1])
                     else:
                         # Use RGB for wireframe mode (no transparency)
+                        # Triangle 1: Bottom-left to midpoint to Bottom-right
                         glColor3f(*colors[0][:3])
                         glVertex3f(corners[0][0], heights[0], corners[0][1])
                         
+                        glColor3f(*colors[4][:3])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
+                        
                         glColor3f(*colors[1][:3])
                         glVertex3f(corners[1][0], heights[1], corners[1][1])
                         
-                        glColor3f(*colors[2][:3])
-                        glVertex3f(corners[2][0], heights[2], corners[2][1])
-                        
-                        # Triangle 2: Bottom-right, Top-right, Top-left
+                        # Triangle 2: Bottom-right to midpoint to Top-right
                         glColor3f(*colors[1][:3])
                         glVertex3f(corners[1][0], heights[1], corners[1][1])
+                        
+                        glColor3f(*colors[4][:3])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
                         
                         glColor3f(*colors[3][:3])
                         glVertex3f(corners[3][0], heights[3], corners[3][1])
                         
+                        # Triangle 3: Top-right to midpoint to Top-left
+                        glColor3f(*colors[3][:3])
+                        glVertex3f(corners[3][0], heights[3], corners[3][1])
+                        
+                        glColor3f(*colors[4][:3])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
+                        
                         glColor3f(*colors[2][:3])
                         glVertex3f(corners[2][0], heights[2], corners[2][1])
+                        
+                        # Triangle 4: Top-left to midpoint to Bottom-left
+                        glColor3f(*colors[2][:3])
+                        glVertex3f(corners[2][0], heights[2], corners[2][1])
+                        
+                        glColor3f(*colors[4][:3])  # Midpoint color
+                        glVertex3f(mid_x, mid_height, mid_z)
+                        
+                        glColor3f(*colors[0][:3])
+                        glVertex3f(corners[0][0], heights[0], corners[0][1])
         
         glEnd()
         
