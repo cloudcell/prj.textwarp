@@ -62,6 +62,8 @@ class GUI3DPlugin(Plugin):
         self.char_textures = {}
         self.lock = threading.Lock()  # Lock for thread safety
         self.snakes = []  # List to store snake data for connected rendering
+        self.debug_messages = []  # List to store debug messages
+        self.max_debug_messages = 2  # Maximum number of debug messages to display
         
         # Display options
         self.show_letters = True
@@ -127,7 +129,7 @@ class GUI3DPlugin(Plugin):
             return
             
         # Debug output
-        print(f"Direct snake check found {len(snake_plugin.snakes)} snakes")
+        self.add_debug_message(f"Direct snake check found {len(snake_plugin.snakes)} snakes")
         
         # Find height plugin if available
         height_plugin = None
@@ -191,7 +193,7 @@ class GUI3DPlugin(Plugin):
                     # Only add if not already present
                     if not snake_exists:
                         self.snakes.append(snake_segments)
-                        print(f"Directly added snake with {len(snake_segments)} segments")
+                        self.add_debug_message(f"Directly added snake with {len(snake_segments)} segments")
     
     def render(self, screen):
         """Render the plugin on the curses screen.
@@ -201,94 +203,75 @@ class GUI3DPlugin(Plugin):
         """
         # We don't need to render anything on the curses screen
         # Our rendering happens in the separate PyGame window
-        pass
         
+        # Render debug messages
+        self.render_debug_messages(screen)
+    
     def update_character_map(self):
         """Update the 3D character map from the game world."""
         if not self.active or not self.running:
             return
             
-        # Clear existing characters
+        # Clear the snake list for this update
         with self.lock:
-            self.characters = {}
-            self.snakes = []  # Clear snake data
-        
-        # Get visible area dimensions
-        max_y, max_x = self.game.max_y, self.game.max_x
-        
-        # Get the visible area of the game world
-        for y in range(max_y):
-            for x in range(max_x):
-                # Calculate world coordinates
-                world_x = x - max_x // 2 + self.game.world_x
-                world_y = y - max_y // 2 + self.game.world_y
-                
-                # Get the character at this position
-                char = self.game.get_char_at(world_x, world_y)
-                
-                # Skip spaces
-                if char == ' ':
-                    continue
-                    
-                # Calculate relative coordinates
-                rel_x = world_x - self.game.world_x
-                rel_y = world_y - self.game.world_y
-                
-                # Determine color based on character
-                color = self.get_color_for_char(char, world_x, world_y)
-                
-                # Create a 3D character object
-                with self.lock:
-                    self.characters[(rel_x, rel_y)] = Character3D(char, rel_x, rel_y, color)
-        
-        # Add player character at center (0,0)
-        with self.lock:
-            self.characters[(0, 0)] = Character3D('X', 0, 0, (1.0, 0.0, 0.0, 1.0))
+            self.snakes = []
+            self.characters = {}  # Clear existing characters
             
-        # Add remote players if network plugin is active
-        for plugin in self.game.plugins:
-            if hasattr(plugin, 'remote_players') and plugin.active:
-                for player_id, player in plugin.remote_players.items():
-                    rel_x = player.x - self.game.world_x
-                    rel_y = player.y - self.game.world_y
-                    with self.lock:
-                        self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
+        # Get the current game world state
+        world_x = self.game.world_x
+        world_y = self.game.world_y
+        width = self.game.width
+        height = self.game.height
         
-        # Add snakes if snake plugin is active - ENHANCED VERSION
+        # Find the snake plugin
+        snake_plugin = None
         for plugin in self.game.plugins:
-            if hasattr(plugin, 'snakes') and plugin.active and len(plugin.snakes) > 0:
-                print(f"Found {len(plugin.snakes)} snakes to render")  # Debug output
+            if hasattr(plugin, 'snakes') and plugin.active:
+                snake_plugin = plugin
+                break
                 
-                for snake_idx, snake in enumerate(plugin.snakes):
-                    if not hasattr(snake, 'body') or len(snake.body) == 0:
+        # Find a height plugin if available
+        height_plugin = None
+        for plugin in self.game.plugins:
+            if hasattr(plugin, 'get_height'):
+                height_plugin = plugin
+                break
+                
+        # Process snakes if available
+        if snake_plugin and hasattr(snake_plugin, 'snakes'):
+            try:
+                # Debug output
+                self.add_debug_message(f"Found {len(snake_plugin.snakes)} snakes in update_character_map")
+                
+                # Process each snake
+                for snake_idx, snake in enumerate(snake_plugin.snakes):
+                    if not hasattr(snake, 'body') or not snake.body:
                         continue
                         
                     # Create a list to store this snake's segments
                     snake_segments = []
                     
-                    # Get height for this snake (if available)
-                    height_plugin = None
-                    for p in self.game.plugins:
-                        if hasattr(p, 'get_height'):
-                            height_plugin = p
-                            break
-                    
                     # Process each segment of the snake
                     for i, (sx, sy) in enumerate(snake.body):
+                        # Skip segments outside the visible area
+                        if (abs(sx - world_x) > self.render_distance or 
+                            abs(sy - world_y) > self.render_distance):
+                            continue
+                            
                         # Calculate relative coordinates
-                        rel_x = sx - self.game.world_x
-                        rel_y = sy - self.game.world_y
+                        rel_x = sx - world_x
+                        rel_y = sy - world_y
                         
                         # Get height for this position (if available)
-                        height = 0.5  # Default height if no height plugin
+                        segment_height = 1.0  # Default height if no height plugin
                         if height_plugin:
                             try:
-                                height = height_plugin.get_height(sx, sy) / 10.0  # Scale height appropriately
-                            except:
-                                pass  # Use default height if there's an error
-                        
+                                segment_height = height_plugin.get_height(sx, sy) / 10.0
+                            except Exception as e:
+                                self.add_debug_message(f"Height error: {e}")
+                                
                         # Ensure height is positive for visibility
-                        height = max(0.5, abs(height))
+                        segment_height = max(1.0, abs(segment_height))
                         
                         # Determine color based on segment type
                         if i == 0:
@@ -300,25 +283,70 @@ class GUI3DPlugin(Plugin):
                         if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles:
                             color = (1.0, 0.0, 0.0, 1.0)  # Bright red for rattles
                         
-                        # Create a character object for the snake segment
-                        char_obj = Character3D('S', rel_x, rel_y, color, height=height)
+                        # Add to the snake segments list
+                        snake_segments.append({
+                            'position': (rel_x, segment_height, rel_y),
+                            'color': color,
+                            'type': 'head' if i == 0 else ('rattle' if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles else 'body')
+                        })
                         
-                        # Add to the characters dictionary
+                        # Also add as a character for compatibility
+                        char_obj = Character3D('S', rel_x, rel_y, color)
+                        char_obj.height = segment_height  # Override the height
                         with self.lock:
-                            char_key = f"{rel_x},{rel_y}"
-                            self.characters[char_key] = char_obj
-                            
-                            # Add to the snake segments list with explicit position
-                            snake_segments.append({
-                                'position': (rel_x, height, rel_y),
-                                'color': color,
-                                'type': 'head' if i == 0 else ('rattle' if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles else 'body')
-                            })
+                            self.characters[(rel_x, rel_y)] = char_obj
                     
                     # Add this snake's segments to the snakes list
                     if snake_segments:
-                        self.snakes.append(snake_segments)
-                        print(f"Added snake with {len(snake_segments)} segments")  # Debug output
+                        with self.lock:
+                            self.snakes.append(snake_segments)
+                            self.add_debug_message(f"Added snake {snake_idx} with {len(snake_segments)} segments")
+            except Exception as e:
+                self.add_debug_message(f"Snake processing error: {e}")
+        
+        # Get visible area dimensions
+        max_y, max_x = self.game.max_y, self.game.max_x
+        
+        # Add characters from the game world
+        for y in range(max_y):
+            for x in range(max_x):
+                # Get the character at this position
+                char = self.game.get_char_at(x, y)
+                if not char or char == ' ':
+                    continue
+                    
+                # Calculate world coordinates
+                world_coord_x = x + self.game.world_x
+                world_coord_y = y + self.game.world_y
+                
+                # Get color for this character
+                color = self.get_color_for_char(char, world_coord_x, world_coord_y)
+                
+                # Create a Character3D object
+                char_obj = Character3D(char, x, y, color)
+                
+                # Set height if a height plugin is available
+                if height_plugin:
+                    try:
+                        height = height_plugin.get_height(world_coord_x, world_coord_y)
+                        char_obj.height = height / 10.0  # Scale height to a reasonable range
+                    except:
+                        pass  # Use default height if there's an error
+                
+                # Add to the characters dictionary
+                with self.lock:
+                    self.characters[(x, y)] = char_obj
+        
+        # Add remote players if network plugin is active
+        for plugin in self.game.plugins:
+            if hasattr(plugin, 'players') and plugin.active:
+                for player in plugin.players.values():
+                    if not player.is_active():
+                        continue
+                    rel_x = player.x - self.game.world_x
+                    rel_y = player.y - self.game.world_y
+                    with self.lock:
+                        self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
     
     def get_color_for_char(self, char, x, y):
         """Get the color for a character."""
@@ -636,6 +664,9 @@ class GUI3DPlugin(Plugin):
         glRotatef(self.rotation_y, 0, 1, 0)
         glRotatef(self.rotation_z, 0, 0, 1)
         
+        # Add debug message with XYZ coordinates
+        self.add_debug_message(f"XYZ{self.render_debug_info()}")
+        
         # Draw coordinate axes if enabled
         if self.show_axes:
             self.draw_axes()
@@ -660,92 +691,22 @@ class GUI3DPlugin(Plugin):
         
         # Update the display
         pygame.display.flip()
-    
-    def init_font_texture(self):
-        """Initialize the font texture."""
-        # We'll create a simple texture with ASCII characters
-        try:
-            # Create a surface with all ASCII characters
-            font_size = 32
-            font = pygame.font.SysFont('monospace', font_size, bold=True)
+        
+    def render_debug_info(self):
+        """Generate debug information string."""
+        # Format the debug information string with specific content
+        if not self.snakes:
+            return "Drawing 0 snakes"
             
-            # Create textures for each character
-            for i in range(32, 127):
-                char = chr(i)
-                text_surface = font.render(char, True, (255, 255, 255))
-                text_data = pygame.image.tostring(text_surface, "RGBA", True)
+        # Format the debug message to match the requested format
+        debug_info = f"Drawing {len(self.snakes)} snakes"
+        
+        # Add snake segment information if available
+        if len(self.snakes) > 0:
+            for i in range(min(3, len(self.snakes))):
+                debug_info += f" Snake {i} has {len(self.snakes[i])} segments"
                 
-                # Create texture
-                texture_id = glGenTextures(1)
-                glBindTexture(GL_TEXTURE_2D, texture_id)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-                width, height = text_surface.get_size()
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
-                
-                # Store the texture ID and dimensions
-                self.char_textures[char] = {
-                    'id': texture_id,
-                    'width': width,
-                    'height': height
-                }
-        except Exception as e:
-            self.game.message = f"Font texture error: {e}"
-            self.game.message_timeout = 5.0
-            
-    def draw_vertical_lines(self):
-        """Draw vertical lines from ground to character height."""
-        # Disable texturing
-        glDisable(GL_TEXTURE_2D)
-        
-        # Make a copy of the characters dictionary to avoid modification during iteration
-        with self.lock:
-            characters_copy = dict(self.characters)
-        
-        # Draw vertical lines from ground to character height
-        glLineWidth(1.0)
-        
-        # Extend the rendering distance
-        render_range = self.render_distance // 2
-        
-        # Draw all vertical lines first
-        glBegin(GL_LINES)
-        for char_key, char_obj in characters_copy.items():
-            # Skip if the character is too far away
-            if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
-                continue
-                
-            # Set color based on height and color scheme
-            color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
-            glColor3f(*color)
-            
-            # Draw line from ground to character height
-            glVertex3f(char_obj.x, 0, char_obj.y)
-            glVertex3f(char_obj.x, char_obj.height, char_obj.y)
-        glEnd()
-        
-        # Now draw dots at the end of each stick if enabled
-        if self.stick_dot_size > 0:
-            # Enable point sprites for better dots
-            glEnable(GL_POINT_SMOOTH)
-            glPointSize(self.stick_dot_size)
-            
-            glBegin(GL_POINTS)
-            for char_key, char_obj in characters_copy.items():
-                # Skip if the character is too far away
-                if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
-                    continue
-                    
-                # Set color based on height and color scheme
-                color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
-                glColor3f(*color)
-                
-                # Draw dot at the top of the line
-                glVertex3f(char_obj.x, char_obj.height, char_obj.y)
-            glEnd()
-            
-            # Disable point sprites
-            glDisable(GL_POINT_SMOOTH)
+        return debug_info
     
     def draw_characters(self):
         """Draw all characters in the 3D world."""
@@ -813,12 +774,44 @@ class GUI3DPlugin(Plugin):
         # Disable texturing
         glDisable(GL_TEXTURE_2D)
         
+        # Draw coordinate axes for better orientation
+        glBegin(GL_LINES)
+        
+        # X-axis (red)
+        glColor3f(1.0, 0.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(5, 0, 0)
+        
+        # Y-axis (green)
+        glColor3f(0.0, 1.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 5, 0)
+        
+        # Z-axis (blue)
+        glColor3f(0.0, 0.0, 1.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 5)
+        glEnd()
+        
+        # Draw a special marker at the center (0,0) to indicate player position
+        glBegin(GL_LINES)
+        glColor3f(1.0, 1.0, 0.0)  # Yellow
+        
+        # X marker
+        marker_size = 0.5
+        glVertex3f(-marker_size, 0, -marker_size)
+        glVertex3f(marker_size, 0, marker_size)
+        glVertex3f(-marker_size, 0, marker_size)
+        glVertex3f(marker_size, 0, -marker_size)
+        
+        glEnd()
+        
     def draw_connected_snakes(self):
         """Draw snakes as balls connected by lines."""
         if not self.snakes:
             return
             
-        print(f"Drawing {len(self.snakes)} snakes")  # Debug output
+        self.add_debug_message(f"Drawing {len(self.snakes)} snakes")  # Debug output
         
         # Save current OpenGL state
         glPushAttrib(GL_ALL_ATTRIB_BITS)
@@ -842,7 +835,7 @@ class GUI3DPlugin(Plugin):
         
         # Draw each snake
         for snake_idx, snake in enumerate(self.snakes):
-            print(f"Snake {snake_idx} has {len(snake)} segments")  # Debug output
+            self.add_debug_message(f"Snake {snake_idx} has {len(snake)} segments")  # Debug output
             
             if len(snake) < 2:
                 continue  # Need at least 2 segments to draw connections
@@ -1413,3 +1406,118 @@ class GUI3DPlugin(Plugin):
         # Restore game state
         self.game.in_menu = True
         self.game.needs_redraw = True
+
+    def add_debug_message(self, message):
+        """Add a debug message to the list of messages to display."""
+        self.debug_messages.append(message)
+        # Keep only the most recent messages
+        if len(self.debug_messages) > self.max_debug_messages:
+            self.debug_messages = self.debug_messages[-self.max_debug_messages:]
+    
+    def render_debug_messages(self, screen):
+        """Render debug messages at the bottom of the terminal."""
+        if not self.debug_messages:
+            return
+            
+        # Get curses module from the game
+        curses = self.game.curses
+        
+        # Get screen dimensions
+        max_y, max_x = screen.getmaxyx()
+        
+        # Clear the bottom lines
+        for i in range(self.max_debug_messages):
+            screen.move(max_y - 2 - i, 0)
+            screen.clrtoeol()
+        
+        # Display debug messages
+        for i, message in enumerate(reversed(self.debug_messages)):
+            if i >= self.max_debug_messages:
+                break
+            screen.addstr(max_y - 2 - i, 0, message[:max_x-1])
+
+    def init_font_texture(self):
+        """Initialize the font texture."""
+        # We'll create a simple texture with ASCII characters
+        try:
+            # Create a surface with all ASCII characters
+            font_size = 32
+            font = pygame.font.SysFont('monospace', font_size, bold=True)
+            
+            # Create textures for each character
+            for i in range(32, 127):
+                char = chr(i)
+                text_surface = font.render(char, True, (255, 255, 255))
+                text_data = pygame.image.tostring(text_surface, "RGBA", True)
+                
+                # Create texture
+                texture_id = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, texture_id)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+                width, height = text_surface.get_size()
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+                
+                # Store the texture ID and dimensions
+                self.char_textures[char] = {
+                    'id': texture_id,
+                    'width': width,
+                    'height': height
+                }
+        except Exception as e:
+            self.game.message = f"Font texture error: {e}"
+            self.game.message_timeout = 5.0
+            
+    def draw_vertical_lines(self):
+        """Draw vertical lines from ground to character height."""
+        # Disable texturing
+        glDisable(GL_TEXTURE_2D)
+        
+        # Make a copy of the characters dictionary to avoid modification during iteration
+        with self.lock:
+            characters_copy = dict(self.characters)
+        
+        # Draw vertical lines from ground to character height
+        glLineWidth(1.0)
+        
+        # Extend the rendering distance
+        render_range = self.render_distance // 2
+        
+        # Draw all vertical lines first
+        glBegin(GL_LINES)
+        for char_key, char_obj in characters_copy.items():
+            # Skip if the character is too far away
+            if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                continue
+                
+            # Set color based on height and color scheme
+            color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+            glColor3f(*color)
+            
+            # Draw line from ground to character height
+            glVertex3f(char_obj.x, 0, char_obj.y)
+            glVertex3f(char_obj.x, char_obj.height, char_obj.y)
+        glEnd()
+        
+        # Now draw dots at the end of each stick if enabled
+        if self.stick_dot_size > 0:
+            # Enable point sprites for better dots
+            glEnable(GL_POINT_SMOOTH)
+            glPointSize(self.stick_dot_size)
+            
+            glBegin(GL_POINTS)
+            for char_key, char_obj in characters_copy.items():
+                # Skip if the character is too far away
+                if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                    continue
+                    
+                # Set color based on height and color scheme
+                color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+                glColor3f(*color)
+                
+                # Draw dot at the top of the line
+                glVertex3f(char_obj.x, char_obj.height, char_obj.y)
+            glEnd()
+            
+            # Disable point sprites
+            glDisable(GL_POINT_SMOOTH)
