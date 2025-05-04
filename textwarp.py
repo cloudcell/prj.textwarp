@@ -28,6 +28,7 @@ class TextAdventure:
         self.fuel_color = None
         self.snake_indicator_color = None
         self.fps_color = None
+        self.dot_color = None
         self.max_y = 0
         self.max_x = 0
         self.last_update = time.time()
@@ -147,36 +148,37 @@ class TextAdventure:
             print(f"Error saving plugin config: {e}")
 
     def setup(self):
-        # Initialize curses
+        """Setup curses and colors."""
         self.screen = curses.initscr()
         curses.start_color()
         curses.use_default_colors()
-        curses.curs_set(0)  # Hide cursor
         curses.noecho()
         curses.cbreak()
+        curses.curs_set(0)
         self.screen.keypad(True)
         
         # Initialize colors
-        curses.init_pair(1, curses.COLOR_RED, -1)  # Player color
-        curses.init_pair(2, 8, -1)  # Grey background
-        curses.init_pair(3, curses.COLOR_GREEN, -1)  # @ symbol color
-        curses.init_pair(4, curses.COLOR_YELLOW, -1)  # 0 symbol color
-        curses.init_pair(5, curses.COLOR_GREEN, -1)  # Menu color
-        curses.init_pair(6, curses.COLOR_BLUE, -1)  # Snake color
-        curses.init_pair(7, curses.COLOR_CYAN, -1)  # Fuel color
-        curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_BLACK)  # Snake indicator with black background
-        curses.init_pair(9, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # FPS counter with black background
+        curses.init_pair(1, curses.COLOR_RED, -1)  # Red for player
+        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)  # White on black for panels
+        curses.init_pair(3, curses.COLOR_GREEN, -1)  # Green for @ symbols
+        curses.init_pair(4, curses.COLOR_YELLOW, -1)  # Yellow for FPS counter
+        curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_BLACK)  # Black on black for snake indicator
+        curses.init_pair(6, curses.COLOR_BLUE, -1)  # Blue for snakes
+        curses.init_pair(7, curses.COLOR_CYAN, -1)  # Cyan for fuel
+        curses.init_pair(8, curses.COLOR_MAGENTA, -1)  # Magenta for menu
+        curses.init_pair(9, 208, -1)  # Orange for eggs ('0')
+        curses.init_pair(10, 94, -1)  # Brown for dots ('.')
         
         self.player_color = curses.color_pair(1)
-        self.background_color = curses.color_pair(2)
-        self.at_symbol_color = curses.color_pair(3)
-        self.zero_color = curses.color_pair(4)
         self.panel_color = curses.color_pair(2)
-        self.menu_color = curses.color_pair(5)
-        self.snake_color = curses.color_pair(6)
+        self.at_symbol_color = curses.color_pair(3)
+        self.zero_color = curses.color_pair(9)  # Changed to orange
         self.fuel_color = curses.color_pair(7)
-        self.snake_indicator_color = curses.color_pair(8)
-        self.fps_color = curses.color_pair(9)
+        self.snake_color = curses.color_pair(6)
+        self.snake_indicator_color = curses.color_pair(5)
+        self.fps_color = curses.color_pair(4)
+        self.menu_color = curses.color_pair(8)
+        self.dot_color = curses.color_pair(10)  # Brown for dots
         
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
@@ -501,6 +503,8 @@ class TextAdventure:
                     color = self.zero_color
                 elif char == '&':
                     color = self.fuel_color
+                elif char == '.':
+                    color = self.dot_color
                 else:
                     color = self.background_color
                     

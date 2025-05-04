@@ -178,9 +178,11 @@ class GUI3DPlugin(Plugin):
         elif char == '@':  # Plants
             return (0.0, 0.8, 0.0, 1.0)  # Green
         elif char == '0':  # Eggs
-            return (1.0, 1.0, 0.0, 1.0)  # Yellow
+            return (1.0, 0.5, 0.0, 1.0)  # Orange
         elif char == '&':  # Fuel
             return (0.0, 1.0, 1.0, 1.0)  # Cyan
+        elif char == '.':  # Dots
+            return (0.5, 0.25, 0.0, 1.0)  # Brown
         else:
             # Generate color based on character code
             h = (ord(char) % 360) / 360.0
