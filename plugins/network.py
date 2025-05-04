@@ -31,7 +31,7 @@ class NetworkPlayer:
 class NetworkServer(threading.Thread):
     """Server thread that handles connections from clients."""
     
-    def __init__(self, plugin, host='0.0.0.0', port=5555):
+    def __init__(self, plugin, host='127.0.0.1', port=5555):
         super().__init__(daemon=True)
         self.plugin = plugin
         self.host = host
@@ -50,13 +50,21 @@ class NetworkServer(threading.Thread):
             self.server_socket.settimeout(1.0)  # 1 second timeout for accept
             self.server_socket.listen(5)
             
-            self.plugin.game.message = f"Network server started on port {self.port}"
+            self.plugin.game.message = f"Network server started on {self.host}:{self.port}"
             self.plugin.game.message_timeout = 3.0
             
             while self.running:
                 try:
                     # Accept new connections
                     client_socket, addr = self.server_socket.accept()
+                    
+                    # Check if the connection is from a local address
+                    if not NetworkServer.is_local_address(addr[0]):
+                        self.plugin.game.message = f"Rejected connection from non-local address: {addr[0]}"
+                        self.plugin.game.message_timeout = 3.0
+                        client_socket.close()
+                        continue
+                    
                     client_thread = threading.Thread(
                         target=self.handle_client,
                         args=(client_socket, addr),
@@ -200,6 +208,34 @@ class NetworkServer(threading.Thread):
                     client_socket.sendall(json.dumps(message).encode('utf-8'))
                 except:
                     pass
+                    
+    @staticmethod
+    def is_local_address(ip):
+        """Check if an IP address is local."""
+        # Local loopback
+        if ip.startswith('127.'):
+            return True
+        
+        # Private network ranges
+        if ip.startswith('10.') or ip.startswith('192.168.') or ip.startswith('172.'):
+            # For 172.x.x.x, check if it's in the private range 172.16.0.0 - 172.31.255.255
+            if ip.startswith('172.'):
+                parts = ip.split('.')
+                if len(parts) == 4:
+                    try:
+                        second_octet = int(parts[1])
+                        if 16 <= second_octet <= 31:
+                            return True
+                        return False
+                    except ValueError:
+                        return False
+            return True
+            
+        # Link-local addresses
+        if ip.startswith('169.254.'):
+            return True
+            
+        return False
 
 
 class NetworkClient(threading.Thread):
@@ -396,12 +432,12 @@ class NetworkPlugin(Plugin):
         self.disconnect()
         super().deactivate()
         
-    def start_server(self, port=5555):
+    def start_server(self, host='127.0.0.1', port=5555):
         """Start a server to host a game."""
         if self.server:
             self.stop_server()
             
-        self.server = NetworkServer(self, port=port)
+        self.server = NetworkServer(self, host=host, port=port)
         self.server.start()
         self.is_server = True
         
@@ -458,9 +494,9 @@ class NetworkPlugin(Plugin):
             # Show status
             status = "Not connected"
             if self.is_server:
-                status = "Server running"
+                status = f"Server running on {self.server.host}:{self.server.port}"
             elif self.is_client and self.client and self.client.connected:
-                status = f"Connected to {self.client.host}"
+                status = f"Connected to {self.client.host}:{self.client.port}"
                 
             self.game.screen.addstr(len(options) + 3, 0, f"Status: {status}")
             
@@ -470,6 +506,12 @@ class NetworkPlugin(Plugin):
                 for i, (pid, player) in enumerate(self.players.items()):
                     if i < 10:  # Show at most 10 players
                         self.game.screen.addstr(len(options) + 6 + i, 2, f"{player.name} ({player.x}, {player.y})")
+            
+            # Show network security notice
+            self.game.screen.addstr(len(options) + 16, 0, "Security Notice:", curses.A_BOLD)
+            self.game.screen.addstr(len(options) + 17, 0, "- Connections restricted to local network only")
+            self.game.screen.addstr(len(options) + 18, 0, "- Use 127.0.0.1 to connect on same machine")
+            self.game.screen.addstr(len(options) + 19, 0, "- Use local IP for LAN connections (e.g. 192.168.x.x)")
             
             self.game.screen.refresh()
             
@@ -482,17 +524,47 @@ class NetworkPlugin(Plugin):
                 selected = (selected + 1) % len(options)
             elif key == 10 or key == 13:  # Enter
                 if options[selected] == "Start Server":
-                    # Get port
+                    # Get host and port
+                    host_options = [
+                        "127.0.0.1 (localhost only)",
+                        "Local network (all interfaces)"
+                    ]
+                    host_choice = self.show_selection_menu("Select server binding:", host_options)
+                    
+                    if host_choice == 0:
+                        host = "127.0.0.1"  # Localhost only
+                    elif host_choice == 1:
+                        host = ""  # All interfaces
+                    else:
+                        continue  # User canceled
+                    
                     port = self.get_input("Enter port (default: 5555): ")
                     try:
                         port = int(port) if port else 5555
-                        self.start_server(port)
+                        self.start_server(host=host, port=port)
                     except ValueError:
                         self.game.message = "Invalid port number"
                         self.game.message_timeout = 2.0
                 elif options[selected] == "Connect to Server":
                     # Get host and port
-                    host = self.get_input("Enter host: ")
+                    host_options = [
+                        "127.0.0.1 (same machine)",
+                        "Enter local IP address"
+                    ]
+                    host_choice = self.show_selection_menu("Connect to:", host_options)
+                    
+                    if host_choice == 0:
+                        host = "127.0.0.1"
+                    elif host_choice == 1:
+                        host = self.get_input("Enter local IP address: ")
+                        temp_server = NetworkServer(self)  # Create temporary server just for validation
+                        if not host or not NetworkServer.is_local_address(host):
+                            self.game.message = "Invalid or non-local IP address"
+                            self.game.message_timeout = 2.0
+                            continue
+                    else:
+                        continue  # User canceled
+                    
                     port = self.get_input("Enter port (default: 5555): ")
                     name = self.get_input("Enter your name: ")
                     
@@ -514,7 +586,37 @@ class NetworkPlugin(Plugin):
                 
         # Redraw game
         self.game.needs_redraw = True
+    
+    def show_selection_menu(self, title, options):
+        """Show a selection menu and return the selected index or -1 if canceled."""
+        selected = 0
         
+        while True:
+            # Draw menu
+            self.game.screen.clear()
+            self.game.screen.addstr(0, 0, title, curses.A_BOLD)
+            
+            for i, option in enumerate(options):
+                if i == selected:
+                    self.game.screen.addstr(i + 2, 2, f"> {option} <", curses.A_BOLD)
+                else:
+                    self.game.screen.addstr(i + 2, 4, option)
+                    
+            self.game.screen.addstr(len(options) + 3, 0, "Press ESC to cancel")
+            self.game.screen.refresh()
+            
+            # Handle input
+            key = self.game.screen.getch()
+            
+            if key == curses.KEY_UP:
+                selected = (selected - 1) % len(options)
+            elif key == curses.KEY_DOWN:
+                selected = (selected + 1) % len(options)
+            elif key == 10 or key == 13:  # Enter
+                return selected
+            elif key == 27:  # ESC
+                return -1
+                
     def get_input(self, prompt):
         """Get text input from the user."""
         self.game.screen.clear()
