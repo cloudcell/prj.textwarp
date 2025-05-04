@@ -46,16 +46,7 @@ class TextAdventure:
             ord('6'): False,  # E
             ord('1'): False,  # SW
             ord('2'): False,  # S
-            ord('3'): False,  # SE
-            # Numpad with numlock
-            curses.KEY_A1: False,  # NW (7)
-            curses.KEY_A2: False,  # N (8)
-            curses.KEY_A3: False,  # NE (9)
-            curses.KEY_B1: False,  # W (4)
-            curses.KEY_B3: False,  # E (6)
-            curses.KEY_C1: False,  # SW (1)
-            curses.KEY_C2: False,  # S (2)
-            curses.KEY_C3: False   # SE (3)
+            ord('3'): False   # SE
         }
         # Direction mapping for numeric keypad
         self.numpad_directions = {
@@ -67,17 +58,7 @@ class TextAdventure:
             ord('6'): (1, 0),    # E
             ord('1'): (-1, 1),   # SW
             ord('2'): (0, 1),    # S
-            ord('3'): (1, 1),    # SE
-            # Numpad with numlock
-            curses.KEY_A1: (-1, -1),  # NW (7)
-            curses.KEY_A2: (0, -1),   # N (8)
-            curses.KEY_A3: (1, -1),   # NE (9)
-            curses.KEY_B1: (-1, 0),   # W (4)
-            curses.KEY_B2: (0, 0),    # Center (5)
-            curses.KEY_B3: (1, 0),    # E (6)
-            curses.KEY_C1: (-1, 1),   # SW (1)
-            curses.KEY_C2: (0, 1),    # S (2)
-            curses.KEY_C3: (1, 1)     # SE (3)
+            ord('3'): (1, 1)     # SE
         }
 
     def setup(self):
@@ -129,31 +110,31 @@ class TextAdventure:
         else:
             # Check vertical movement
             if (self.key_states[curses.KEY_UP] or self.key_states[ord('w')] or 
-                self.key_states[ord('8')] or self.key_states[curses.KEY_A2]):
+                self.key_states[ord('8')]):
                 self.dy = -1
             elif (self.key_states[curses.KEY_DOWN] or self.key_states[ord('s')] or 
-                  self.key_states[ord('2')] or self.key_states[curses.KEY_C2]):
+                  self.key_states[ord('2')]):
                 self.dy = 1
                 
             # Check horizontal movement
             if (self.key_states[curses.KEY_LEFT] or self.key_states[ord('a')] or 
-                self.key_states[ord('4')] or self.key_states[curses.KEY_B1]):
+                self.key_states[ord('4')]):
                 self.dx = -1
             elif (self.key_states[curses.KEY_RIGHT] or self.key_states[ord('d')] or 
-                  self.key_states[ord('6')] or self.key_states[curses.KEY_B3]):
+                  self.key_states[ord('6')]):
                 self.dx = 1
             
             # Check diagonal movement
-            if self.key_states[ord('7')] or self.key_states[curses.KEY_A1]:  # NW
+            if self.key_states[ord('7')]:  # NW
                 self.dx = -1
                 self.dy = -1
-            elif self.key_states[ord('9')] or self.key_states[curses.KEY_A3]:  # NE
+            elif self.key_states[ord('9')]:  # NE
                 self.dx = 1
                 self.dy = -1
-            elif self.key_states[ord('1')] or self.key_states[curses.KEY_C1]:  # SW
+            elif self.key_states[ord('1')]:  # SW
                 self.dx = -1
                 self.dy = 1
-            elif self.key_states[ord('3')] or self.key_states[curses.KEY_C3]:  # SE
+            elif self.key_states[ord('3')]:  # SE
                 self.dx = 1
                 self.dy = 1
         
