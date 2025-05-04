@@ -366,9 +366,9 @@ class Polygraph3DPlugin(Plugin):
                     color = gui_plugin.get_color_for_char(char, world_x, world_y)
                     
                     # Calculate the visual height (scaled for better visibility)
-                    # Apply a more dramatic height scaling to make differences more visible
-                    normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
-                    visual_height = 0.1 + normalized_height * (10.0 / self.height_scale)
+                    # We need to preserve the sign (positive or negative) for proper visualization
+                    # Just scale the magnitude of the height by the height_scale factor
+                    visual_height = height / self.height_scale
                     
                     # Create a 3D character object with the explicit height value
                     char_obj = Character3D(
@@ -590,9 +590,9 @@ class Polygraph3DPlugin(Plugin):
                             color = self_gui.get_color_for_char(char, world_x, world_y)
                             
                             # Calculate the visual height (scaled for better visibility)
-                            # Apply a more dramatic height scaling to make differences more visible
-                            normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
-                            visual_height = 0.1 + normalized_height * (10.0 / self.height_scale)
+                            # We need to preserve the sign (positive or negative) for proper visualization
+                            # Just scale the magnitude of the height by the height_scale factor
+                            visual_height = height / self.height_scale
                             
                             # Create a 3D character object with the explicit height value
                             char_obj = Character3D(
