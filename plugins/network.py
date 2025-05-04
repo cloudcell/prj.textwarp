@@ -4,7 +4,13 @@ import json
 import time
 import random
 import curses
+import struct
 from plugins.base import Plugin
+
+# Discovery constants
+DISCOVERY_PORT = 5556  # Port for discovery broadcasts
+DISCOVERY_MESSAGE = "TEXTWARP_SERVER_DISCOVERY"
+DISCOVERY_RESPONSE = "TEXTWARP_SERVER_HERE"
 
 class NetworkPlayer:
     """Represents a remote player in the game."""
@@ -39,6 +45,8 @@ class NetworkServer(threading.Thread):
         self.running = True
         self.clients = {}
         self.lock = threading.Lock()
+        self.discovery_socket = None
+        self.discovery_thread = None
         
     def run(self):
         """Run the server thread."""
@@ -60,6 +68,9 @@ class NetworkServer(threading.Thread):
                     # Try to get the local IP address to display
                     local_ip = NetworkServer.get_local_ip()
                     self.plugin.game.message = f"Network server started on {local_ip}:{self.port}"
+                    
+                    # Start discovery service if binding to all interfaces
+                    self.start_discovery_service()
                 else:
                     self.plugin.game.message = f"Network server started on {bind_host}:{self.port}"
                     
@@ -106,6 +117,14 @@ class NetworkServer(threading.Thread):
         if hasattr(self, 'server_socket'):
             try:
                 self.server_socket.close()
+            except:
+                pass
+                
+        # Close discovery socket
+        if self.discovery_socket:
+            try:
+                self.discovery_socket.close()
+                self.discovery_socket = None
             except:
                 pass
                 
@@ -225,6 +244,62 @@ class NetworkServer(threading.Thread):
                 except:
                     pass
                     
+    def start_discovery_service(self):
+        """Start the discovery service to respond to client broadcasts."""
+        try:
+            # Create UDP socket for discovery
+            self.discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            
+            # Bind to the discovery port
+            self.discovery_socket.bind(('', DISCOVERY_PORT))
+            
+            # Start discovery thread
+            self.discovery_thread = threading.Thread(
+                target=self.discovery_listener,
+                daemon=True
+            )
+            self.discovery_thread.start()
+            
+            self.plugin.game.message += " (Discovery enabled)"
+        except Exception as e:
+            self.plugin.game.message = f"Discovery service error: {e}"
+            self.plugin.game.message_timeout = 3.0
+    
+    def discovery_listener(self):
+        """Listen for discovery broadcasts and respond."""
+        if not self.discovery_socket:
+            return
+            
+        self.discovery_socket.settimeout(1.0)
+        
+        while self.running:
+            try:
+                data, addr = self.discovery_socket.recvfrom(1024)
+                message = data.decode('utf-8')
+                
+                # Check if this is a discovery request
+                if message == DISCOVERY_MESSAGE:
+                    # Only respond if the request is from a local address
+                    if NetworkServer.is_local_address(addr[0]):
+                        # Send response with server info
+                        server_info = {
+                            'type': DISCOVERY_RESPONSE,
+                            'host': NetworkServer.get_local_ip(),
+                            'port': self.port,
+                            'name': self.plugin.game.server_name if hasattr(self.plugin.game, 'server_name') else "TextWarp Server"
+                        }
+                        response = json.dumps(server_info).encode('utf-8')
+                        self.discovery_socket.sendto(response, addr)
+            except socket.timeout:
+                # Just continue on timeout
+                pass
+            except Exception as e:
+                if self.running:
+                    self.plugin.game.message = f"Discovery listener error: {e}"
+                    self.plugin.game.message_timeout = 3.0
+                    break
+
     @staticmethod
     def get_local_ip():
         """Get the local IP address of this machine."""
@@ -418,7 +493,14 @@ class NetworkPlugin(Plugin):
         self.is_client = False
         self.players = {}  # Remote players (when server)
         self.player_color = None  # Will be set in activate()
+        self.discovered_servers = []  # List of discovered servers
+        self.server_class = NetworkServer  # For easier testing/mocking
         
+    @property
+    def name(self):
+        """Return the name of the plugin."""
+        return "Network"
+    
     def update(self, dt):
         """Update the plugin state."""
         if not self.active:
@@ -487,7 +569,7 @@ class NetworkPlugin(Plugin):
         if self.server:
             self.stop_server()
             
-        self.server = NetworkServer(self, host=host, port=port)
+        self.server = self.server_class(self, host=host, port=port)
         self.server.start()
         self.is_server = True
         
@@ -523,6 +605,7 @@ class NetworkPlugin(Plugin):
         options = [
             "Start Server",
             "Connect to Server",
+            "Discover Servers",
             "Disconnect",
             "Back"
         ]
@@ -556,6 +639,17 @@ class NetworkPlugin(Plugin):
                 for i, (pid, player) in enumerate(self.players.items()):
                     if i < 10:  # Show at most 10 players
                         self.game.screen.addstr(len(options) + 6 + i, 2, f"{player.name} ({player.x}, {player.y})")
+            
+            # Show discovered servers if any
+            if self.discovered_servers:
+                self.game.screen.addstr(len(options) + 5 + (len(self.players) if self.players else 0) + 1, 0, "Discovered servers:")
+                for i, server in enumerate(self.discovered_servers):
+                    if i < 5:  # Show at most 5 servers
+                        self.game.screen.addstr(
+                            len(options) + 5 + (len(self.players) if self.players else 0) + 2 + i, 
+                            2, 
+                            f"{server['name']} ({server['host']}:{server['port']})"
+                        )
             
             # Show your local IP address for convenience
             local_ip = NetworkServer.get_local_ip()
@@ -603,32 +697,72 @@ class NetworkPlugin(Plugin):
                     # Get host and port
                     host_options = [
                         "127.0.0.1 (same machine)",
-                        "Enter local IP address"
+                        "Enter local IP address",
+                        "Select from discovered servers"
                     ]
                     host_choice = self.show_selection_menu("Connect to:", host_options)
                     
                     if host_choice == 0:
                         host = "127.0.0.1"
+                        port = self.get_input("Enter port (default: 5555): ")
+                        port = int(port) if port else 5555
                     elif host_choice == 1:
                         host = self.get_input("Enter local IP address: ")
                         if not host:
                             self.game.message = "IP address cannot be empty"
                             self.game.message_timeout = 2.0
                             continue
+                        port = self.get_input("Enter port (default: 5555): ")
+                        port = int(port) if port else 5555
+                    elif host_choice == 2:
+                        # If no servers discovered yet, do a discovery
+                        if not self.discovered_servers:
+                            self.game.message = "Discovering servers..."
+                            self.game.message_timeout = 2.0
+                            self.discover_servers()
+                            
+                        # Show discovered servers menu
+                        if not self.discovered_servers:
+                            self.game.message = "No servers found"
+                            self.game.message_timeout = 2.0
+                            continue
+                            
+                        server_options = [f"{s['name']} ({s['host']}:{s['port']})" for s in self.discovered_servers]
+                        server_options.append("Cancel")
+                        
+                        server_choice = self.show_selection_menu("Select server:", server_options)
+                        if server_choice < 0 or server_choice >= len(self.discovered_servers):
+                            continue  # User canceled or invalid choice
+                            
+                        host = self.discovered_servers[server_choice]['host']
+                        port = self.discovered_servers[server_choice]['port']
                     else:
                         continue  # User canceled
                     
-                    port = self.get_input("Enter port (default: 5555): ")
                     name = self.get_input("Enter your name: ")
+                    name = name if name else "Player"
                     
-                    if host:
-                        try:
-                            port = int(port) if port else 5555
-                            name = name if name else "Player"
-                            self.connect_to_server(host, port, name)
-                        except ValueError:
-                            self.game.message = "Invalid port number"
-                            self.game.message_timeout = 2.0
+                    try:
+                        self.connect_to_server(host, port, name)
+                    except ValueError:
+                        self.game.message = "Invalid port number"
+                        self.game.message_timeout = 2.0
+                elif options[selected] == "Discover Servers":
+                    # Run server discovery
+                    self.game.message = "Discovering servers on the network..."
+                    self.game.message_timeout = 3.0
+                    
+                    # Clear previous discoveries
+                    self.discovered_servers = []
+                    
+                    # Run discovery
+                    servers = self.discover_servers()
+                    
+                    if servers:
+                        self.game.message = f"Found {len(servers)} server(s)"
+                    else:
+                        self.game.message = "No servers found"
+                    self.game.message_timeout = 3.0
                 elif options[selected] == "Disconnect":
                     self.stop_server()
                     self.disconnect()
@@ -689,3 +823,66 @@ class NetworkPlugin(Plugin):
         curses.curs_set(0)
         
         return input_str
+
+    def discover_servers(self, timeout=2.0):
+        """Discover TextWarp servers on the local network."""
+        self.discovered_servers = []
+        
+        try:
+            # Create a UDP socket for broadcasting
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(0.5)  # Short timeout for receiving responses
+            
+            # Bind to any available port
+            sock.bind(('', 0))
+            
+            # Send discovery broadcast
+            discovery_message = DISCOVERY_MESSAGE.encode('utf-8')
+            sock.sendto(discovery_message, ('<broadcast>', DISCOVERY_PORT))
+            
+            # Set end time for discovery
+            end_time = time.time() + timeout
+            
+            # Collect responses until timeout
+            while time.time() < end_time:
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    
+                    # Only accept responses from local addresses
+                    if not NetworkServer.is_local_address(addr[0]):
+                        continue
+                        
+                    try:
+                        server_info = json.loads(data.decode('utf-8'))
+                        if server_info.get('type') == DISCOVERY_RESPONSE:
+                            # Add to discovered servers if not already there
+                            server_entry = {
+                                'host': server_info.get('host'),
+                                'port': server_info.get('port'),
+                                'name': server_info.get('name', "Unknown Server")
+                            }
+                            
+                            # Check if we already have this server
+                            if not any(s['host'] == server_entry['host'] and 
+                                      s['port'] == server_entry['port'] 
+                                      for s in self.discovered_servers):
+                                self.discovered_servers.append(server_entry)
+                    except json.JSONDecodeError:
+                        # Invalid response, ignore
+                        pass
+                except socket.timeout:
+                    # Socket timeout, just continue
+                    pass
+                    
+            return self.discovered_servers
+        except Exception as e:
+            self.game.message = f"Server discovery error: {e}"
+            self.game.message_timeout = 3.0
+            return []
+        finally:
+            try:
+                sock.close()
+            except:
+                pass
