@@ -24,6 +24,21 @@ class TextAdventure:
         # Accumulated movement that hasn't been applied yet
         self.acc_x = 0
         self.acc_y = 0
+        # Debug info
+        self.last_key = 0
+        # Flag to indicate if redraw is needed
+        self.needs_redraw = True
+        # Key state tracking for diagonal movement
+        self.key_states = {
+            curses.KEY_UP: False,
+            curses.KEY_DOWN: False,
+            curses.KEY_LEFT: False,
+            curses.KEY_RIGHT: False,
+            ord('w'): False,
+            ord('s'): False,
+            ord('a'): False,
+            ord('d'): False
+        }
 
     def setup(self):
         # Initialize curses
@@ -32,7 +47,7 @@ class TextAdventure:
         curses.noecho()
         curses.cbreak()
         curses.curs_set(0)  # Hide cursor
-        self.screen.keypad(True)
+        self.screen.keypad(True)  # Enable keypad mode for special keys
         self.screen.timeout(50)  # Non-blocking input with 50ms timeout
         
         # Get screen dimensions
@@ -49,33 +64,59 @@ class TextAdventure:
         self.panel_color = curses.color_pair(4)
 
     def handle_input(self):
-        # Reset movement direction
+        # Get input
+        key = self.screen.getch()
+        self.last_key = key  # Store for debugging
+        
+        # Reset all key states if Escape is pressed
+        if key == 27:  # ESC key
+            for k in self.key_states:
+                self.key_states[k] = False
+            return
+            
+        # Update key states based on key press/release
+        if key != -1:  # A key was pressed
+            if key in self.key_states:
+                self.key_states[key] = True
+        
+        # Calculate movement direction based on key states
         self.dx = 0
         self.dy = 0
         
-        # Get input
-        key = self.screen.getch()
-        
-        # Handle movement keys
-        if key == curses.KEY_UP:
+        # Check vertical movement
+        if (self.key_states[curses.KEY_UP] or self.key_states[ord('w')]):
             self.dy = -1
-        elif key == curses.KEY_DOWN:
+        elif (self.key_states[curses.KEY_DOWN] or self.key_states[ord('s')]):
             self.dy = 1
-        elif key == curses.KEY_LEFT:
+            
+        # Check horizontal movement
+        if (self.key_states[curses.KEY_LEFT] or self.key_states[ord('a')]):
             self.dx = -1
-        elif key == curses.KEY_RIGHT:
+        elif (self.key_states[curses.KEY_RIGHT] or self.key_states[ord('d')]):
             self.dx = 1
-        elif key == ord('q') or key == ord('Q'):
-            self.running = False
         
-        # Handle diagonal movement (combined keys)
-        # Note: This is a simple approach that works with the limitations of terminal input
-        # For better diagonal movement, we'd need to track key states
-        if self.dx != 0 and self.dy != 0:
-            # Normalize diagonal movement to avoid faster diagonal speed
-            magnitude = math.sqrt(self.dx**2 + self.dy**2)
-            self.dx = self.dx / magnitude
-            self.dy = self.dy / magnitude
+        # Handle quit
+        if key == ord('q') or key == ord('Q'):
+            self.running = False
+            
+        # If any movement is happening, force a redraw
+        if self.dx != 0 or self.dy != 0:
+            self.needs_redraw = True
+            # Move the world immediately by 1 cell in the pressed direction
+            self.world_x += self.dx
+            self.world_y += self.dy
+            
+            # Display direction in panel
+            direction = ""
+            if self.dy < 0:
+                direction += "N"
+            elif self.dy > 0:
+                direction += "S"
+            if self.dx > 0:
+                direction += "E"
+            elif self.dx < 0:
+                direction += "W"
+            self.direction = direction
 
     def update(self):
         # Calculate time since last update
@@ -83,7 +124,13 @@ class TextAdventure:
         dt = current_time - self.last_update
         self.last_update = current_time
         
-        # Accumulate movement
+        # Simulate key release after a short time
+        # This allows for diagonal movement by pressing keys in sequence
+        for key in self.key_states:
+            if self.key_states[key]:
+                self.key_states[key] = False  # Auto-release keys
+        
+        # Accumulate movement (for smooth continuous movement if needed)
         self.acc_x += self.dx * self.move_speed * dt
         self.acc_y += self.dy * self.move_speed * dt
         
@@ -92,13 +139,19 @@ class TextAdventure:
             move_x = int(self.acc_x)
             self.world_x += move_x
             self.acc_x -= move_x  # Keep remainder for next update
+            self.needs_redraw = True
             
         if abs(self.acc_y) >= 1:
             move_y = int(self.acc_y)
             self.world_y += move_y
             self.acc_y -= move_y  # Keep remainder for next update
+            self.needs_redraw = True
 
     def render(self):
+        # Only redraw if needed
+        if not self.needs_redraw:
+            return
+            
         self.screen.clear()
         
         # Calculate player position at center of screen
@@ -142,7 +195,8 @@ class TextAdventure:
         
         # Draw panel at the bottom
         panel_y = self.max_y - 2
-        panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X Position: ({self.world_x}, {self.world_y})"
+        direction = getattr(self, 'direction', '')
+        panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction}"
         
         # Fill panel background
         for x in range(self.max_x - 1):
@@ -153,6 +207,9 @@ class TextAdventure:
         
         # Update screen
         self.screen.refresh()
+        
+        # Reset redraw flag
+        self.needs_redraw = False
 
     def cleanup(self):
         # Clean up curses
@@ -169,6 +226,9 @@ class TextAdventure:
                 self.handle_input()
                 self.update()
                 self.render()
+                
+                # Small delay to prevent CPU hogging
+                time.sleep(0.01)
                 
         except Exception as e:
             self.cleanup()
