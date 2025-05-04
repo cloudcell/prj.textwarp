@@ -439,67 +439,124 @@ class TextAdventure:
                 self.needs_redraw = True
 
     def render(self):
-        # Only redraw if needed
+        """Render the game."""
         if not self.needs_redraw:
             return
             
-        # Clear screen
         self.screen.clear()
         
-        # Render game world
-        self.render_game_world()
-        
-        # Render menu if active
         if self.in_menu:
             self.render_menu()
+        else:
+            # Render the game world
+            self.render_game_world()
+            
+            # Render coordinate notches on top of the game world
+            self.render_coordinate_notches()
+            
+            # Render UI elements
+            self.render_ui()
+            
+            # Render plugins
+            for plugin in self.plugins:
+                if plugin.active:
+                    plugin.render(self.screen)
         
-        # Draw top menu bar
-        self.screen.addstr(0, 0, " " * (self.max_x - 1), self.menu_color)
-        menu_text = "TextWarp Adventure | Press ESC for Menu"
-        self.screen.addstr(0, (self.max_x - len(menu_text)) // 2, menu_text, self.menu_color)
-        
-        # Draw snake indicator on second line
-        snake_count = sum(1 for plugin in self.plugins if isinstance(plugin, SnakePlugin) and plugin.active for _ in plugin.snakes)
-        snake_indicator = f"Snakes Detected: {snake_count}"
-        # Fill the entire line with black background
-        self.screen.addstr(1, 0, " " * (self.max_x - 1), self.snake_indicator_color)
-        # Draw the indicator text
-        self.screen.addstr(1, 2, snake_indicator, self.snake_indicator_color)
-        
-        # Draw FPS counter
-        fps_text = f"FPS: {self.current_fps:.2f}"
-        self.screen.addstr(1, self.max_x - len(fps_text) - 2, fps_text, self.fps_color)
-        
-        # Refresh screen
         self.screen.refresh()
-        
-        # Reset redraw flag
         self.needs_redraw = False
 
-    def get_char_at(self, x, y):
-        """Get the character at world coordinates (x, y)"""
-        # Check if there's a space at this location
-        space_key = self.get_space_key(x, y)
-        if space_key in self.spaces:
-            return ' '
+    def render_coordinate_notches(self):
+        """Render coordinate notches on the left and top of the game world."""
+        # Calculate the world coordinates for the visible area
+        start_x = self.world_x - self.max_x // 2
+        start_y = self.world_y - self.max_y // 2
+        end_x = start_x + self.max_x
+        end_y = start_y + self.max_y
+        
+        # Find the nearest multiples of 10 for the visible area
+        notch_start_x = (start_x // 10) * 10
+        notch_start_y = (start_y // 10) * 10
+        
+        # Render horizontal notches (on top)
+        for x in range(notch_start_x, end_x + 10, 10):
+            # Calculate screen position
+            screen_x = x - start_x
             
-        # Calculate character based on location ID
-        location_id = (x + y * 1000) % 127
-        return chr(location_id)
+            # Skip if out of bounds
+            if screen_x < 3 or screen_x >= self.max_x:
+                continue
+                
+            # Get the last digit
+            last_digit = abs(x) % 10
+            
+            # Determine sign
+            sign = '+' if x >= 0 else '-'
+            
+            # Draw the notch
+            try:
+                # Line 3: Vertical line
+                self.screen.addch(3, screen_x, '|')
+                
+                # Line 4: Sign
+                self.screen.addch(4, screen_x, sign)
+                
+                # Line 5: Last digit
+                self.screen.addch(5, screen_x, str(last_digit))
+            except:
+                pass  # Ignore errors from writing to the bottom-right corner
+        
+        # Render vertical notches (on left)
+        for y in range(notch_start_y, end_y + 10, 10):
+            # Calculate screen position
+            screen_y = y - start_y
+            
+            # Skip if out of bounds or in the notch area
+            if screen_y < 6 or screen_y >= self.max_y:
+                continue
+                
+            # Get the last digit
+            last_digit = abs(y) % 10
+            
+            # Determine sign
+            sign = '+' if y >= 0 else '-'
+            
+            # Draw the notch
+            try:
+                # Column 0: Horizontal line
+                self.screen.addch(screen_y, 0, '-')
+                
+                # Column 1: Sign
+                self.screen.addch(screen_y, 1, sign)
+                
+                # Column 2: Last digit
+                self.screen.addch(screen_y, 2, str(last_digit))
+            except:
+                pass  # Ignore errors from writing to the bottom-right corner
 
     def render_game_world(self):
         # Draw the background
-        for y in range(1, self.max_y - 2):
-            for x in range(self.max_x - 1):
+        half_width = self.max_x // 2
+        half_height = self.max_y // 2
+        
+        # Leave space for coordinate notches (3 columns on left, 6 rows at top)
+        notch_left_margin = 3
+        notch_top_margin = 6
+        
+        # Adjust visible area to account for notch margins
+        for y in range(notch_top_margin, self.max_y):
+            for x in range(notch_left_margin, self.max_x):
                 # Calculate world coordinates
-                world_x = x - self.max_x // 2 + self.world_x
-                world_y = y - self.max_y // 2 + self.world_y
+                world_x = x - half_width + self.world_x
+                world_y = y - half_height + self.world_y
                 
-                # Get character at this position
+                # Get the character at this position
                 char = self.get_char_at(world_x, world_y)
                 
-                # Choose color based on character
-                if char == '@':
+                # Determine color based on character
+                color = self.background_color
+                if char == 'X':
+                    color = self.player_color
+                elif char == '@':
                     color = self.at_symbol_color
                 elif char == '0':
                     color = self.zero_color
@@ -507,37 +564,26 @@ class TextAdventure:
                     color = self.fuel_color
                 elif char == '.':
                     color = self.dot_color
-                else:
-                    color = self.background_color
-                    
+                
                 # Draw the character
-                self.screen.addch(y, x, char, color)
+                try:
+                    self.screen.addch(y, x, char, color)
+                except:
+                    pass  # Ignore errors from writing to the bottom-right corner
         
-        # Draw player at center of screen
-        if 0 <= self.max_y // 2 < self.max_y - 2 and 0 <= self.max_x // 2 < self.max_x - 1:
-            self.screen.addch(self.max_y // 2, self.max_x // 2, self.player_char, self.player_color)
+        # Draw player position and fuel info at the bottom
+        status_line = f"Top-Left: ({self.world_x - half_width + notch_left_margin}, {self.world_y - half_height + notch_top_margin}) | X: ({self.world_x}, {self.world_y}) | Dir: {self.dx},{self.dy} | Fuel: {self.fuel}"
+        try:
+            self.screen.addstr(self.max_y - 1, 0, status_line)
+        except:
+            pass  # Ignore errors from writing to the bottom-right corner
         
-        # Render active plugins
-        for plugin in self.plugins:
-            if plugin.active:
-                plugin.render(self.screen)
-        
-        # Draw panel at the bottom
-        panel_y = self.max_y - 2
-        direction = getattr(self, 'direction', '')
-        
-        # Determine panel text based on whether there's a message
-        if self.message:
-            panel_text = self.message
-        else:
-            panel_text = f"Top-Left: ({self.world_x - self.max_x // 2}, {self.world_y - self.max_y // 2}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space | ESC: Menu | Fuel: {self.fuel}"
-        
-        # Fill panel background
-        for x in range(self.max_x - 1):
-            self.screen.addch(panel_y, x, ' ', self.panel_color)
-        
-        # Draw panel text
-        self.screen.addstr(panel_y, 1, panel_text[:self.max_x - 3], self.panel_color)
+        # Display message if there is one
+        if self.message and self.message_timeout > 0:
+            try:
+                self.screen.addstr(self.max_y - 2, 0, self.message)
+            except:
+                pass  # Ignore errors from writing to the bottom-right corner
 
     def render_menu(self):
         # Draw semi-transparent overlay
@@ -579,12 +625,41 @@ class TextAdventure:
             else:
                 self.screen.addstr(menu_y + i + 3, menu_x + 4, item, self.menu_color)
 
+    def render_ui(self):
+        # Draw top menu bar
+        self.screen.addstr(0, 0, " " * (self.max_x - 1), self.menu_color)
+        menu_text = "TextWarp Adventure | Press ESC for Menu"
+        self.screen.addstr(0, (self.max_x - len(menu_text)) // 2, menu_text, self.menu_color)
+        
+        # Draw snake indicator on second line
+        snake_count = sum(1 for plugin in self.plugins if isinstance(plugin, SnakePlugin) and plugin.active for _ in plugin.snakes)
+        snake_indicator = f"Snakes Detected: {snake_count}"
+        # Fill the entire line with black background
+        self.screen.addstr(1, 0, " " * (self.max_x - 1), self.snake_indicator_color)
+        # Draw the indicator text
+        self.screen.addstr(1, 2, snake_indicator, self.snake_indicator_color)
+        
+        # Draw FPS counter
+        fps_text = f"FPS: {self.current_fps:.2f}"
+        self.screen.addstr(1, self.max_x - len(fps_text) - 2, fps_text, self.fps_color)
+
     def cleanup(self):
         # Clean up curses
         curses.nocbreak()
         self.screen.keypad(False)
         curses.echo()
         curses.endwin()
+
+    def get_char_at(self, x, y):
+        """Get the character at world coordinates (x, y)"""
+        # Check if there's a space at this location
+        space_key = self.get_space_key(x, y)
+        if space_key in self.spaces:
+            return ' '
+            
+        # Calculate character based on location ID
+        location_id = (x + y * 1000) % 127
+        return chr(location_id)
 
     def get_space_key(self, x, y):
         """Generate a hash key for a space at coordinates (x, y)"""
