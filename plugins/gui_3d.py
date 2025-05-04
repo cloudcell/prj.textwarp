@@ -60,6 +60,7 @@ class GUI3DPlugin(Plugin):
         self.font_texture = None
         self.char_textures = {}
         self.lock = threading.Lock()  # Lock for thread safety
+        self.snakes = []  # List to store snake data for connected rendering
         
         # Display options
         self.show_letters = True
@@ -70,6 +71,7 @@ class GUI3DPlugin(Plugin):
         self.terrain_mesh_opacity = 0.7  # 0.0 to 1.0
         self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
         self.stick_dot_size = 8.0  # Size of dots at the end of sticks
+        self.show_snake_connections = True  # New option to show snakes as connected balls
         
         # Load settings if they exist
         self.load_settings()
@@ -119,6 +121,7 @@ class GUI3DPlugin(Plugin):
         # Clear existing characters
         with self.lock:
             self.characters = {}
+            self.snakes = []  # Clear snake data
         
         # Get visible area dimensions
         max_y, max_x = self.game.max_y, self.game.max_x
@@ -137,17 +140,57 @@ class GUI3DPlugin(Plugin):
                 if char == ' ':
                     continue
                     
+                # Calculate relative coordinates
+                rel_x = world_x - self.game.world_x
+                rel_y = world_y - self.game.world_y
+                
                 # Determine color based on character
                 color = self.get_color_for_char(char, world_x, world_y)
                 
-                # Create 3D character - use relative coordinates to keep player at center
+                # Create a 3D character object
                 with self.lock:
-                    self.characters[(world_x, world_y)] = Character3D(
-                        char, 
-                        world_x - self.game.world_x,  # Relative X position
-                        world_y - self.game.world_y,  # Relative Y position
-                        color
-                    )
+                    self.characters[(rel_x, rel_y)] = Character3D(char, rel_x, rel_y, color)
+        
+        # Add snakes if snake plugin is active
+        for plugin in self.game.plugins:
+            if hasattr(plugin, 'snakes') and plugin.active:
+                for snake_idx, snake in enumerate(plugin.snakes):
+                    # Create a list to store this snake's segments
+                    snake_segments = []
+                    
+                    for i, (sx, sy) in enumerate(snake.body):
+                        # Calculate relative coordinates
+                        rel_x = sx - self.game.world_x
+                        rel_y = sy - self.game.world_y
+                        
+                        # Determine color based on segment type
+                        if i == 0:
+                            color = (0.0, 0.6, 0.0, 1.0)  # Green for head
+                        else:
+                            color = (0.0, 0.0, 0.6, 1.0)  # Lighter blue for body
+                            
+                        # Rattles are red
+                        if i >= len(snake.body) - snake.rattles:
+                            color = (0.8, 0.0, 0.0, 1.0)  # Red for rattles
+                        
+                        # Create a character object for the snake segment
+                        char_obj = Character3D('S', rel_x, rel_y, color)
+                        
+                        # Add to the characters dictionary
+                        with self.lock:
+                            char_key = f"{rel_x},{rel_y}"
+                            self.characters[char_key] = char_obj
+                            
+                            # Add to the snake segments list
+                            snake_segments.append({
+                                'position': (rel_x, rel_y, char_obj.height),
+                                'color': color,
+                                'type': 'head' if i == 0 else ('rattle' if i >= len(snake.body) - snake.rattles else 'body')
+                            })
+                    
+                    # Add this snake's segments to the snakes list
+                    if snake_segments:
+                        self.snakes.append(snake_segments)
         
         # Add player character at center (0,0)
         with self.lock:
@@ -163,28 +206,6 @@ class GUI3DPlugin(Plugin):
                     with self.lock:
                         self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
                     
-        # Add snakes if snake plugin is active
-        for plugin in self.game.plugins:
-            if hasattr(plugin, 'snakes') and plugin.active:
-                for snake in plugin.snakes:
-                    for i, (sx, sy) in enumerate(snake.body):
-                        # Convert to relative coordinates
-                        rel_x = sx + self.game.world_x - self.game.world_x  # Simplifies to sx
-                        rel_y = sy + self.game.world_y - self.game.world_y  # Simplifies to sy
-                        
-                        # Head is different color than body
-                        if i == 0:
-                            color = (0.0, 0.0, 0.8, 1.0)  # Dark blue for head
-                        else:
-                            color = (0.0, 0.0, 0.6, 1.0)  # Lighter blue for body
-                            
-                        # Rattles are red
-                        if i >= len(snake.body) - snake.rattles:
-                            color = (0.8, 0.0, 0.0, 1.0)  # Red for rattles
-                            
-                        with self.lock:
-                            self.characters[(rel_x, rel_y)] = Character3D('S', rel_x, rel_y, color)
-    
     def get_color_for_char(self, char, x, y):
         """Get the color for a character."""
         if char == 'X':  # Player
@@ -488,6 +509,10 @@ class GUI3DPlugin(Plugin):
                 if self.show_letters:
                     self.draw_characters()
                 
+                # Draw snakes as connected balls if enabled
+                if self.show_snake_connections:
+                    self.draw_connected_snakes()
+                
                 # Update the display
                 pygame.display.flip()
                 
@@ -660,6 +685,68 @@ class GUI3DPlugin(Plugin):
         # Disable texturing
         glDisable(GL_TEXTURE_2D)
         
+    def draw_connected_snakes(self):
+        """Draw snakes as balls connected by lines."""
+        if not self.show_snake_connections or not self.snakes:
+            return
+            
+        # Enable blending for transparency
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Draw each snake
+        for snake in self.snakes:
+            if len(snake) < 2:
+                continue  # Need at least 2 segments to draw connections
+                
+            # Draw the connecting lines first (behind the balls)
+            glLineWidth(3.0)  # Thicker lines
+            glBegin(GL_LINE_STRIP)
+            
+            for segment in snake:
+                pos = segment['position']
+                color = segment['color']
+                # Make the line slightly transparent
+                glColor4f(color[0], color[1], color[2], 0.7)
+                glVertex3f(pos[0], pos[2], pos[1])  # Note: Y is up in OpenGL
+                
+            glEnd()
+            
+            # Now draw the balls (spheres) for each segment
+            for segment in snake:
+                pos = segment['position']
+                color = segment['color']
+                segment_type = segment['type']
+                
+                # Push matrix for this segment
+                glPushMatrix()
+                
+                # Position the sphere
+                glTranslatef(pos[0], pos[2], pos[1])  # Note: Y is up in OpenGL
+                
+                # Set color
+                glColor4f(color[0], color[1], color[2], 1.0)
+                
+                # Draw a sphere with appropriate size based on segment type
+                if segment_type == 'head':
+                    radius = 0.3  # Larger head
+                elif segment_type == 'rattle':
+                    radius = 0.25  # Medium rattles
+                else:
+                    radius = 0.2  # Smaller body segments
+                    
+                # Create a sphere quadric object
+                quadric = gluNewQuadric()
+                gluQuadricDrawStyle(quadric, GLU_FILL)
+                gluQuadricNormals(quadric, GLU_SMOOTH)
+                gluSphere(quadric, radius, 16, 16)  # Draw the sphere
+                gluDeleteQuadric(quadric)
+                
+                glPopMatrix()
+                
+        # Disable blending
+        glDisable(GL_BLEND)
+    
     def draw_terrain_mesh(self):
         """Draw a mesh connecting the tips of the sticks to visualize the terrain surface."""
         # Disable texturing
@@ -976,6 +1063,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_mesh_opacity = settings.get("terrain_mesh_opacity", 0.7)
                 self.terrain_color_scheme = settings.get("terrain_color_scheme", "height")
                 self.stick_dot_size = settings.get("stick_dot_size", 8.0)
+                self.show_snake_connections = settings.get("show_snake_connections", True)
         except:
             # Use default settings if file doesn't exist or is invalid
             pass
@@ -993,7 +1081,8 @@ class GUI3DPlugin(Plugin):
                     "terrain_mesh_style": self.terrain_mesh_style,
                     "terrain_mesh_opacity": self.terrain_mesh_opacity,
                     "terrain_color_scheme": self.terrain_color_scheme,
-                    "stick_dot_size": self.stick_dot_size
+                    "stick_dot_size": self.stick_dot_size,
+                    "show_snake_connections": self.show_snake_connections
                 }
                 json.dump(settings, f)
         except:
@@ -1011,26 +1100,28 @@ class GUI3DPlugin(Plugin):
         original_terrain_mesh_opacity = self.terrain_mesh_opacity
         original_terrain_color_scheme = self.terrain_color_scheme
         original_stick_dot_size = self.stick_dot_size
+        original_show_snake_connections = self.show_snake_connections
         
         # Variables for menu navigation
         current_selection = 0
         in_settings_menu = True
+        
+        # Create settings list
         settings = [
             {"name": "Show Letters", "value": self.show_letters, "type": "bool"},
-            {"name": "Show Height Sticks", "value": self.show_sticks, "type": "bool"},
-            {"name": "Show Ground Mesh", "value": self.show_mesh, "type": "bool"},
+            {"name": "Show Sticks", "value": self.show_sticks, "type": "bool"},
+            {"name": "Show Mesh", "value": self.show_mesh, "type": "bool"},
             {"name": "Show Terrain Mesh", "value": self.show_terrain_mesh, "type": "bool"},
             {"name": "Terrain Mesh Style", "value": self.terrain_mesh_style, "type": "str"},
             {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float"},
             {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"},
-            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float"}
+            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float"},
+            {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"}
         ]
         
         # Get curses module from the game
         curses = self.game.curses
-        
-        # Save current state
-        self.game.in_menu = False
+        self.game.in_menu = True
         self.game.needs_redraw = True
         
         # Main loop for settings menu
@@ -1039,14 +1130,9 @@ class GUI3DPlugin(Plugin):
             self.game.screen.clear()
             
             # Draw header
-            max_y, max_x = self.game.screen.getmaxyx()
-            self.game.screen.addstr(0, 0, "3D Visualization Settings", curses.A_BOLD)
-            self.game.screen.addstr(1, 0, "═" * (max_x - 1))
-            
-            # Draw instructions
-            self.game.screen.addstr(2, 0, "Use ↑/↓ to select a setting, SPACE to toggle")
-            self.game.screen.addstr(3, 0, "Press ENTER to apply changes, ESC to cancel")
-            self.game.screen.addstr(4, 0, "═" * (max_x - 1))
+            self.game.screen.addstr(1, 2, "3D Visualization Settings", curses.A_BOLD)
+            self.game.screen.addstr(3, 2, "Use UP/DOWN to navigate, SPACE to toggle/change, ENTER to save, ESC to cancel")
+            self.game.screen.addstr(4, 2, "Press 'R' to reset all settings to defaults")
             
             # Draw settings
             for i, setting in enumerate(settings):
@@ -1055,24 +1141,23 @@ class GUI3DPlugin(Plugin):
                     attr = curses.A_REVERSE | curses.A_BOLD
                 else:
                     attr = 0
-                
-                # Draw the item
+                    
+                # Format the value display
                 if setting["type"] == "bool":
-                    value_text = "ON" if setting["value"] else "OFF"
-                elif setting["type"] == "str":
-                    value_text = setting["value"]
+                    value_display = "ON" if setting["value"] else "OFF"
                 elif setting["type"] == "float":
-                    value_text = f"{setting['value']:.2f}"
-                self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {value_text}", attr)
-            
-            # Draw footer
-            self.game.screen.addstr(max_y - 2, 0, "═" * (max_x - 1))
-            self.game.screen.addstr(max_y - 1, 0, "R: Reset to defaults")
-            
-            # Refresh screen
+                    value_display = f"{setting['value']:.1f}"
+                else:
+                    value_display = setting["value"]
+                    
+                # Draw the setting
+                self.game.screen.addstr(6 + i, 4, setting["name"], attr)
+                self.game.screen.addstr(6 + i, 30, value_display, attr)
+                
+            # Refresh the screen
             self.game.screen.refresh()
             
-            # Get input
+            # Get user input
             key = self.game.screen.getch()
             
             # Handle input
@@ -1117,10 +1202,12 @@ class GUI3DPlugin(Plugin):
                 for setting in settings:
                     if setting["type"] == "bool":
                         setting["value"] = True
-                    elif setting["type"] == "str":
+                    elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
                         setting["value"] = "filled"
+                    elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
+                        setting["value"] = "height"
                     elif setting["type"] == "float":
-                        setting["value"] = 8.0
+                        setting["value"] = 8.0 if setting["name"] == "Stick Dot Size" else 0.7
             elif key == 10:  # Enter key
                 # Apply changes
                 self.show_letters = settings[0]["value"]
@@ -1131,6 +1218,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_mesh_opacity = settings[5]["value"]
                 self.terrain_color_scheme = settings[6]["value"]
                 self.stick_dot_size = settings[7]["value"]
+                self.show_snake_connections = settings[8]["value"]
                 
                 # Save settings
                 self.save_settings()
@@ -1147,6 +1235,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_mesh_opacity = original_terrain_mesh_opacity
                 self.terrain_color_scheme = original_terrain_color_scheme
                 self.stick_dot_size = original_stick_dot_size
+                self.show_snake_connections = original_show_snake_connections
                 
                 # Exit without saving
                 in_settings_menu = False

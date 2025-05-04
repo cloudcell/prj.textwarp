@@ -330,62 +330,80 @@ class Polygraph3DPlugin(Plugin):
     
     def integrate_with_gui3d(self, gui_plugin):
         """Integrate with the GUI3D plugin to provide height values."""
-        # Store the original update_character_map method
-        original_update_character_map = gui_plugin.update_character_map
+        if not gui_plugin or not hasattr(gui_plugin, 'update_character_map'):
+            return False
+            
+        # Store a reference to the plugin for use in the method
+        self.gui_plugin_ref = gui_plugin
         
+        # Store the original update_character_map method for later restoration
+        if not hasattr(gui_plugin, 'original_update_character_map'):
+            gui_plugin.original_update_character_map = gui_plugin.update_character_map
+            
         # Define a new update_character_map method that uses our height values
-        def new_update_character_map():
-            if not gui_plugin.active or not gui_plugin.running:
+        def new_update_character_map(self_gui):
+            """Update the 3D character map from the game world."""
+            if not self_gui.active or not self_gui.running:
                 return
                 
             # Clear existing characters
-            with gui_plugin.lock:
-                gui_plugin.characters = {}
+            with self_gui.lock:
+                self_gui.characters = {}
             
             # Get visible area dimensions
-            max_y, max_x = gui_plugin.game.max_y, gui_plugin.game.max_x
+            max_y, max_x = self_gui.game.max_y, self_gui.game.max_x
             
-            # Get the visible area of the game world
+            # First, update the height map with the visible area
             for y in range(max_y):
                 for x in range(max_x):
                     # Calculate world coordinates
-                    world_x = x - max_x // 2 + gui_plugin.game.world_x
-                    world_y = y - max_y // 2 + gui_plugin.game.world_y
+                    world_x = x - max_x // 2 + self_gui.game.world_x
+                    world_y = y - max_y // 2 + self_gui.game.world_y
                     
                     # Get the character at this position
-                    char = gui_plugin.game.get_char_at(world_x, world_y)
+                    char = self_gui.game.get_char_at(world_x, world_y)
                     
                     # Skip spaces
                     if char == ' ':
                         continue
                         
-                    # Get the height from our plugin
-                    height = self.get_height(world_x, world_y)
-                    
-                    # Determine color based on character
-                    color = gui_plugin.get_color_for_char(char, world_x, world_y)
-                    
-                    # Calculate the visual height (scaled for better visibility)
-                    # We need to preserve the sign (positive or negative) for proper visualization
-                    # Just scale the magnitude of the height by the height_scale factor
-                    visual_height = height / self.height_scale
-                    
-                    # Create a 3D character object with the explicit height value
-                    char_obj = Character3D(
-                        char, 
-                        world_x - gui_plugin.game.world_x, 
-                        world_y - gui_plugin.game.world_y, 
-                        color,
-                        height=visual_height  # Pass height directly
-                    )
-                    
-                    # Add to the character map
-                    with gui_plugin.lock:
-                        char_key = f"{world_x},{world_y}"
-                        gui_plugin.characters[char_key] = char_obj
+                    # Get the height from our plugin (this updates the cache)
+                    self.get_height(world_x, world_y)
+            
+            # Now visualize all cached terrain points, not just the visible area
+            for key, height in self.height_map.items():
+                # Parse the coordinates from the key
+                world_x, world_y = map(int, key.split(','))
+                
+                # Get the character at this position
+                char = self_gui.game.get_char_at(world_x, world_y)
+                
+                # If there's no character (e.g., it's outside the loaded area), use a default
+                if char == ' ':
+                    char = '.'  # Use a dot to represent terrain without a character
+                
+                # Determine color based on character
+                color = self_gui.get_color_for_char(char, world_x, world_y)
+                
+                # Calculate the visual height
+                visual_height = height / self.height_scale
+                
+                # Create a 3D character object with the explicit height value
+                char_obj = Character3D(
+                    char, 
+                    world_x - self_gui.game.world_x, 
+                    world_y - self_gui.game.world_y, 
+                    color,
+                    height=visual_height  # Pass height directly
+                )
+                
+                # Add to the character map
+                with self_gui.lock:
+                    char_key = f"{world_x},{world_y}"
+                    self_gui.characters[char_key] = char_obj
         
-        # Replace the method
-        gui_plugin.update_character_map = new_update_character_map
+        # Replace the method - this is the key fix
+        gui_plugin.update_character_map = lambda: new_update_character_map(gui_plugin)
     
     def load_settings(self):
         """Load settings from a file."""
@@ -524,93 +542,30 @@ class Polygraph3DPlugin(Plugin):
         self.game.needs_redraw = True
     
     def activate(self):
-        """
-        Activate the plugin by replacing the default character generation
-        with the 3D polygraph classifier.
-        """
+        """Activate the plugin."""
         super().activate()
         
-        # Deactivate the regular GraphClassifierPlugin if it's active
-        for plugin in self.game.plugins:
-            if plugin.__class__.__name__ == "GraphClassifierPlugin" and plugin.active:
-                plugin.deactivate()
+        # Initialize the classifier if needed
+        if not self.classifier:
+            self.classifier = Polygraph3DClassifier()
         
-        # Store the original method for later restoration
-        if self.original_get_char is None:
-            self.original_get_char = self.game.get_char_at
-            
-            # Replace with our classifier method
-            def new_get_char_at(x, y):
-                # Check if there's a space at this location
-                space_key = self.game.get_space_key(x, y)
-                if space_key in self.game.spaces:
-                    return ' '
-                    
-                # Use the classifier to determine the character
-                char_code = self.classifier.classify(x, y)
-                return chr(char_code)
-                
-            self.game.get_char_at = new_get_char_at
-            
-        # Find the GUI3D plugin and extend its Character3D class to use our height values
+        # Try to integrate with the GUI3D plugin if it's available
+        gui3d_plugin = None
         for plugin in self.game.plugins:
-            if plugin.__class__.__name__ == "GUI3DPlugin":
-                original_update_character_map = plugin.update_character_map
-                
-                # Override the update_character_map method to include our height values
-                def new_update_character_map(self_gui):
-                    if not self_gui.active or not self_gui.running:
-                        return
-                        
-                    # Clear existing characters
-                    with self_gui.lock:
-                        self_gui.characters = {}
-                    
-                    # Get visible area dimensions
-                    max_y, max_x = self_gui.game.max_y, self_gui.game.max_x
-                    
-                    # Get the visible area of the game world
-                    for y in range(max_y):
-                        for x in range(max_x):
-                            # Calculate world coordinates
-                            world_x = x - max_x // 2 + self_gui.game.world_x
-                            world_y = y - max_y // 2 + self_gui.game.world_y
-                            
-                            # Get the character at this position
-                            char = self_gui.game.get_char_at(world_x, world_y)
-                            
-                            # Skip spaces
-                            if char == ' ':
-                                continue
-                                
-                            # Get the height from our plugin
-                            height = self.get_height(world_x, world_y)
-                            
-                            # Determine color based on character
-                            color = self_gui.get_color_for_char(char, world_x, world_y)
-                            
-                            # Calculate the visual height (scaled for better visibility)
-                            # We need to preserve the sign (positive or negative) for proper visualization
-                            # Just scale the magnitude of the height by the height_scale factor
-                            visual_height = height / self.height_scale
-                            
-                            # Create a 3D character object with the explicit height value
-                            char_obj = Character3D(
-                                char, 
-                                world_x - self_gui.game.world_x, 
-                                world_y - self_gui.game.world_y, 
-                                color,
-                                height=visual_height  # Pass height directly
-                            )
-                            
-                            # Add to the character map
-                            with self_gui.lock:
-                                char_key = f"{world_x},{world_y}"
-                                self_gui.characters[char_key] = char_obj
-                
-                # Replace the method
-                plugin.update_character_map = lambda: new_update_character_map(plugin)
+            if plugin.name == "3D Visualization" and plugin.active:
+                gui3d_plugin = plugin
                 break
+                
+        if gui3d_plugin:
+            # Integrate with the GUI3D plugin
+            self.integrate_with_gui3d(gui3d_plugin)
+        else:
+            # If GUI3D plugin is not available, try to activate it
+            for plugin in self.game.plugins:
+                if plugin.name == "3D Visualization" and not plugin.active:
+                    plugin.activate()
+                    self.integrate_with_gui3d(plugin)
+                    break
     
     def deactivate(self):
         """
@@ -618,19 +573,13 @@ class Polygraph3DPlugin(Plugin):
         """
         super().deactivate()
         
-        # Restore the original method
+        # Restore the original method if we replaced it
         if self.original_get_char is not None:
             self.game.get_char_at = self.original_get_char
             self.original_get_char = None
             
-        # Restore the original update_character_map method in GUI3D plugin
-        for plugin in self.game.plugins:
-            if plugin.__class__.__name__ == "GUI3DPlugin" and plugin.active:
-                if hasattr(plugin, 'using_polygraph_heights'):
-                    # Remove our custom attribute
-                    delattr(plugin, 'using_polygraph_heights')
-                    
-                    # Force the GUI3D plugin to reinitialize its update_character_map method
-                    # This will recreate the original method
-                    plugin.deactivate()
-                    plugin.activate()
+        # Find the GUI3D plugin and restore its original update_character_map method
+        if hasattr(self, 'gui_plugin_ref') and self.gui_plugin_ref:
+            # If we have a reference to the GUI plugin, restore its original method
+            if hasattr(self.gui_plugin_ref, 'original_update_character_map'):
+                self.gui_plugin_ref.update_character_map = self.gui_plugin_ref.original_update_character_map
