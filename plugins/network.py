@@ -251,6 +251,9 @@ class NetworkServer(threading.Thread):
             self.discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             
+            # Allow broadcast messages
+            self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            
             # Bind to the discovery port
             self.discovery_socket.bind(('', DISCOVERY_PORT))
             
@@ -291,6 +294,10 @@ class NetworkServer(threading.Thread):
                         }
                         response = json.dumps(server_info).encode('utf-8')
                         self.discovery_socket.sendto(response, addr)
+                        
+                        # Log discovery request for debugging
+                        self.plugin.game.message = f"Discovery request from {addr[0]}"
+                        self.plugin.game.message_timeout = 2.0
             except socket.timeout:
                 # Just continue on timeout
                 pass
@@ -827,6 +834,8 @@ class NetworkPlugin(Plugin):
     def discover_servers(self, timeout=2.0):
         """Discover TextWarp servers on the local network."""
         self.discovered_servers = []
+        self.game.message = "Broadcasting discovery request..."
+        self.game.message_timeout = 1.0
         
         try:
             # Create a UDP socket for broadcasting
@@ -840,7 +849,27 @@ class NetworkPlugin(Plugin):
             
             # Send discovery broadcast
             discovery_message = DISCOVERY_MESSAGE.encode('utf-8')
-            sock.sendto(discovery_message, ('<broadcast>', DISCOVERY_PORT))
+            
+            # Broadcast to different possible broadcast addresses
+            broadcast_addresses = ['<broadcast>', '255.255.255.255']
+            
+            # Try to get the local subnet broadcast address
+            local_ip = NetworkServer.get_local_ip()
+            if local_ip and local_ip != '127.0.0.1':
+                # Try to determine broadcast address for the subnet
+                parts = local_ip.split('.')
+                if len(parts) == 4:
+                    subnet_broadcast = f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+                    broadcast_addresses.append(subnet_broadcast)
+            
+            # Send to all broadcast addresses
+            for addr in broadcast_addresses:
+                try:
+                    self.game.message = f"Sending to {addr}..."
+                    self.game.message_timeout = 1.0
+                    sock.sendto(discovery_message, (addr, DISCOVERY_PORT))
+                except:
+                    pass  # Ignore errors, try next address
             
             # Set end time for discovery
             end_time = time.time() + timeout
@@ -855,6 +884,9 @@ class NetworkPlugin(Plugin):
                         continue
                         
                     try:
+                        self.game.message = f"Received response from {addr[0]}"
+                        self.game.message_timeout = 1.0
+                        
                         server_info = json.loads(data.decode('utf-8'))
                         if server_info.get('type') == DISCOVERY_RESPONSE:
                             # Add to discovered servers if not already there
