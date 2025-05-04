@@ -22,6 +22,7 @@ class TextAdventure:
         self.panel_color = None
         self.menu_color = None
         self.snake_color = None
+        self.fuel_color = None
         self.max_y = 0
         self.max_x = 0
         self.last_update = time.time()
@@ -75,6 +76,10 @@ class TextAdventure:
         # Message to display
         self.message = ""
         self.message_timeout = 0
+        
+        # Fuel system
+        self.fuel = 0
+        self.fuel_collected = {}  # Dictionary to track collected fuel positions
         
         # Menu system
         self.in_menu = False
@@ -139,6 +144,7 @@ class TextAdventure:
         curses.init_pair(4, curses.COLOR_YELLOW, -1)  # 0 symbol color
         curses.init_pair(5, curses.COLOR_GREEN, -1)  # Menu color
         curses.init_pair(6, curses.COLOR_BLUE, -1)  # Snake color
+        curses.init_pair(7, curses.COLOR_CYAN, -1)  # Fuel color
         
         self.player_color = curses.color_pair(1)
         self.background_color = curses.color_pair(2)
@@ -147,6 +153,7 @@ class TextAdventure:
         self.panel_color = curses.color_pair(2)
         self.menu_color = curses.color_pair(5)
         self.snake_color = curses.color_pair(6)
+        self.fuel_color = curses.color_pair(7)
         
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
@@ -307,46 +314,75 @@ class TextAdventure:
         self.needs_redraw = True
 
     def update(self):
-        # Calculate time since last update
-        current_time = time.time()
-        dt = current_time - self.last_update
-        self.last_update = current_time
+        # Calculate time delta
+        now = time.time()
+        dt = now - self.last_update
+        self.last_update = now
         
-        # Skip game world updates if in menu, but still update plugins
-        # This allows snakes to continue moving while in menu
-        if not self.in_menu:
-            # Check if message timeout has expired
-            if self.message_timeout > 0 and current_time > self.message_timeout:
+        # Update message timeout
+        if self.message and self.message_timeout > 0:
+            self.message_timeout -= dt
+            if self.message_timeout <= 0:
                 self.message = ""
-                self.message_timeout = 0
                 self.needs_redraw = True
-            
-            # Simulate key release after a short time
-            # This allows for diagonal movement by pressing keys in sequence
-            for key in self.key_states:
-                if self.key_states[key]:
-                    self.key_states[key] = False  # Auto-release keys
-            
-            # Accumulate movement (for smooth continuous movement if needed)
+        
+        # Update player position based on movement direction
+        if not self.in_menu and (self.dx != 0 or self.dy != 0):
+            # Accumulate movement
             self.acc_x += self.dx * self.move_speed * dt
             self.acc_y += self.dy * self.move_speed * dt
             
             # Apply accumulated movement when it reaches at least 1 cell
-            if abs(self.acc_x) >= 1:
-                move_x = int(self.acc_x)
+            move_x = int(self.acc_x)
+            move_y = int(self.acc_y)
+            
+            if move_x != 0 or move_y != 0:
                 self.world_x += move_x
-                self.acc_x -= move_x  # Keep remainder for next update
+                self.world_y += move_y
+                self.acc_x -= move_x
+                self.acc_y -= move_y
                 self.needs_redraw = True
                 
-            if abs(self.acc_y) >= 1:
-                move_y = int(self.acc_y)
-                self.world_y += move_y
-                self.acc_y -= move_y  # Keep remainder for next update
-                self.needs_redraw = True
+                # Check if we moved over a fuel ('&') character
+                self.check_for_fuel()
         
-        # Update plugins even when in menu
+        # Update all active plugins
         for plugin in self.plugins:
-            plugin.update(dt)
+            if plugin.active:
+                plugin.update(dt)
+                
+        # Update direction string for status display
+        self.direction = ""
+        if self.dy < 0:
+            self.direction += "N"
+        elif self.dy > 0:
+            self.direction += "S"
+        if self.dx > 0:
+            self.direction += "E"
+        elif self.dx < 0:
+            self.direction += "W"
+
+    def check_for_fuel(self):
+        """Check if the player is on a fuel ('&') character and collect it."""
+        # Get the character at the player's position
+        char = self.get_char_at(self.world_x, self.world_y)
+        
+        # If it's a fuel character and we haven't collected it before
+        if char == '&':
+            fuel_key = self.get_space_key(self.world_x, self.world_y)
+            if fuel_key not in self.fuel_collected:
+                # Collect the fuel
+                self.fuel += 1
+                self.fuel_collected[fuel_key] = True
+                
+                # Create a space where the fuel was
+                self.spaces[fuel_key] = (self.world_x, self.world_y)
+                self.save_spaces()
+                
+                # Show a message
+                self.message = f"Fuel collected! Total: {self.fuel}"
+                self.message_timeout = 2.0  # Show message for 2 seconds
+                self.needs_redraw = True
 
     def render(self):
         # Only redraw if needed
@@ -395,6 +431,8 @@ class TextAdventure:
                     color = self.at_symbol_color
                 elif char == '0':
                     color = self.zero_color
+                elif char == '&':
+                    color = self.fuel_color
                 else:
                     color = self.background_color
                     
@@ -418,7 +456,7 @@ class TextAdventure:
         if self.message:
             panel_text = self.message
         else:
-            panel_text = f"Top-Left: ({self.world_x - self.max_x // 2}, {self.world_y - self.max_y // 2}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space | ESC: Menu"
+            panel_text = f"Top-Left: ({self.world_x - self.max_x // 2}, {self.world_y - self.max_y // 2}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space | ESC: Menu | Fuel: {self.fuel}"
         
         # Fill panel background
         for x in range(self.max_x - 1):
