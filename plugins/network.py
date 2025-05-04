@@ -46,12 +46,28 @@ class NetworkServer(threading.Thread):
             # Create server socket
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.settimeout(1.0)  # 1 second timeout for accept
-            self.server_socket.listen(5)
             
-            self.plugin.game.message = f"Network server started on {self.host}:{self.port}"
-            self.plugin.game.message_timeout = 3.0
+            # If host is empty string, bind to all interfaces (0.0.0.0)
+            bind_host = self.host if self.host else '0.0.0.0'
+            
+            try:
+                self.server_socket.bind((bind_host, self.port))
+                self.server_socket.settimeout(1.0)  # 1 second timeout for accept
+                self.server_socket.listen(5)
+                
+                # Show the actual IP address if binding to all interfaces
+                if bind_host == '0.0.0.0':
+                    # Try to get the local IP address to display
+                    local_ip = NetworkServer.get_local_ip()
+                    self.plugin.game.message = f"Network server started on {local_ip}:{self.port}"
+                else:
+                    self.plugin.game.message = f"Network server started on {bind_host}:{self.port}"
+                    
+                self.plugin.game.message_timeout = 5.0
+            except socket.error as e:
+                self.plugin.game.message = f"Failed to start server: {e}"
+                self.plugin.game.message_timeout = 5.0
+                return
             
             while self.running:
                 try:
@@ -210,6 +226,21 @@ class NetworkServer(threading.Thread):
                     pass
                     
     @staticmethod
+    def get_local_ip():
+        """Get the local IP address of this machine."""
+        try:
+            # Create a socket to determine the outgoing IP address
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # This doesn't actually establish a connection
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            # Fallback to localhost if we can't determine IP
+            return '127.0.0.1'
+            
+    @staticmethod
     def is_local_address(ip):
         """Check if an IP address is local."""
         # Local loopback
@@ -258,9 +289,18 @@ class NetworkClient(threading.Thread):
         """Run the client thread."""
         try:
             # Connect to server
+            self.plugin.game.message = f"Connecting to {self.host}:{self.port}..."
+            self.plugin.game.message_timeout = 3.0
+            
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client_socket.settimeout(5.0)
-            self.client_socket.connect((self.host, self.port))
+            
+            try:
+                self.client_socket.connect((self.host, self.port))
+            except socket.error as e:
+                self.plugin.game.message = f"Connection failed: {e}"
+                self.plugin.game.message_timeout = 5.0
+                return
             
             # Send initial message with player name
             initial_message = {
@@ -270,40 +310,50 @@ class NetworkClient(threading.Thread):
             self.client_socket.sendall(json.dumps(initial_message).encode('utf-8'))
             
             # Receive welcome message
-            data = self.client_socket.recv(1024).decode('utf-8')
-            welcome = json.loads(data)
-            if welcome.get('type') == 'welcome':
-                self.player_id = welcome.get('player_id')
-                self.plugin.game.message = welcome.get('message')
+            try:
+                data = self.client_socket.recv(1024).decode('utf-8')
+                welcome = json.loads(data)
+                if welcome.get('type') == 'welcome':
+                    self.player_id = welcome.get('player_id')
+                    self.plugin.game.message = welcome.get('message')
+                    self.plugin.game.message_timeout = 3.0
+                    self.connected = True
+                    
+                    # Start a thread to receive game state updates
+                    receiver_thread = threading.Thread(
+                        target=self.receive_updates,
+                        daemon=True
+                    )
+                    receiver_thread.start()
+                    
+                    # Main client loop - send position updates
+                    while self.running and self.connected:
+                        # Send position update
+                        position = {
+                            'type': 'position',
+                            'x': self.plugin.game.world_x,
+                            'y': self.plugin.game.world_y
+                        }
+                        try:
+                            self.client_socket.sendall(json.dumps(position).encode('utf-8'))
+                        except:
+                            self.connected = False
+                            break
+                            
+                        # Sleep to avoid flooding the server
+                        time.sleep(0.1)
+                else:
+                    self.plugin.game.message = f"Unexpected server response"
+                    self.plugin.game.message_timeout = 3.0
+            except socket.timeout:
+                self.plugin.game.message = "Server response timeout"
                 self.plugin.game.message_timeout = 3.0
-                self.connected = True
-                
-                # Start a thread to receive game state updates
-                receiver_thread = threading.Thread(
-                    target=self.receive_updates,
-                    daemon=True
-                )
-                receiver_thread.start()
-                
-                # Main client loop - send position updates
-                while self.running and self.connected:
-                    # Send position update
-                    position = {
-                        'type': 'position',
-                        'x': self.plugin.game.world_x,
-                        'y': self.plugin.game.world_y
-                    }
-                    try:
-                        self.client_socket.sendall(json.dumps(position).encode('utf-8'))
-                    except:
-                        self.connected = False
-                        break
-                        
-                    # Sleep to avoid flooding the server
-                    time.sleep(0.1)
+            except json.JSONDecodeError:
+                self.plugin.game.message = "Invalid server response format"
+                self.plugin.game.message_timeout = 3.0
         except Exception as e:
             self.plugin.game.message = f"Connection error: {e}"
-            self.plugin.game.message_timeout = 3.0
+            self.plugin.game.message_timeout = 5.0
         finally:
             self.stop()
             
@@ -494,7 +544,7 @@ class NetworkPlugin(Plugin):
             # Show status
             status = "Not connected"
             if self.is_server:
-                status = f"Server running on {self.server.host}:{self.server.port}"
+                status = f"Server running on {self.server.host if self.server.host else '0.0.0.0'}:{self.server.port}"
             elif self.is_client and self.client and self.client.connected:
                 status = f"Connected to {self.client.host}:{self.client.port}"
                 
@@ -506,6 +556,10 @@ class NetworkPlugin(Plugin):
                 for i, (pid, player) in enumerate(self.players.items()):
                     if i < 10:  # Show at most 10 players
                         self.game.screen.addstr(len(options) + 6 + i, 2, f"{player.name} ({player.x}, {player.y})")
+            
+            # Show your local IP address for convenience
+            local_ip = NetworkServer.get_local_ip()
+            self.game.screen.addstr(len(options) + 14, 0, f"Your local IP address: {local_ip}", curses.A_BOLD)
             
             # Show network security notice
             self.game.screen.addstr(len(options) + 16, 0, "Security Notice:", curses.A_BOLD)
@@ -557,9 +611,8 @@ class NetworkPlugin(Plugin):
                         host = "127.0.0.1"
                     elif host_choice == 1:
                         host = self.get_input("Enter local IP address: ")
-                        temp_server = NetworkServer(self)  # Create temporary server just for validation
-                        if not host or not NetworkServer.is_local_address(host):
-                            self.game.message = "Invalid or non-local IP address"
+                        if not host:
+                            self.game.message = "IP address cannot be empty"
                             self.game.message_timeout = 2.0
                             continue
                     else:
