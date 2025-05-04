@@ -1,1 +1,1 @@
-{"SnakePlugin": true, "GraphClassifierPlugin": true, "Network": true, "3D Visualization": true}
+{"SnakePlugin": true, "GraphClassifierPlugin": false, "Network": true, "3D Visualization": true, "3D Polygraph": true}

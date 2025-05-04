@@ -12,6 +12,7 @@ from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
 from plugins.network import NetworkPlugin
 from plugins.gui_3d import GUI3DPlugin
+from plugins.polygraph_3d import Polygraph3DPlugin
 import copy
 
 class TextAdventure:
@@ -128,6 +129,7 @@ class TextAdventure:
         self.plugins.append(GraphClassifierPlugin(self))
         self.plugins.append(NetworkPlugin(self))
         self.plugins.append(GUI3DPlugin(self))
+        self.plugins.append(Polygraph3DPlugin(self))
         
         # Update plugin menu
         self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
@@ -1050,7 +1052,7 @@ class TextAdventure:
                 # Reinitialize all color pairs
                 for name, setting in self.color_settings.items():
                     curses.init_pair(setting['color_id'], setting['fg'], setting['bg'])
-                
+            
                 # Update all color attributes
                 self.player_color = curses.color_pair(self.color_settings["Player"]["color_id"]) | self.color_settings["Player"]["attr"]
                 self.menu_color = curses.color_pair(self.color_settings["Menu"]["color_id"]) | self.color_settings["Menu"]["attr"]
