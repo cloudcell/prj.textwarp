@@ -35,7 +35,15 @@ class Polygraph3DClassifier(GraphClassifier):
             'plateaus': [(random.randint(-500, 500), random.randint(-500, 500), 
                          random.randint(100, 300), random.random() * 5 + 3,
                          random.random() * 5 + 2) 
-                        for _ in range(5)]  # More pronounced plateaus
+                        for _ in range(5)],  # More pronounced plateaus
+            'ridges': [(random.randint(-500, 500), random.randint(-500, 500), 
+                       random.randint(100, 500), random.randint(10, 50), 
+                       random.randint(0, 360), random.random() * 8 + 8) 
+                      for _ in range(5)],  # Add ridges
+            'canyons': [(random.randint(-500, 500), random.randint(-500, 500), 
+                        random.randint(100, 500), random.randint(10, 50), 
+                        random.randint(0, 360), random.random() * 6 + 4) 
+                       for _ in range(5)]  # Add canyons
         }
     
     def get_height(self, x, y):
@@ -56,7 +64,7 @@ class Polygraph3DClassifier(GraphClassifier):
     def perlin_height_classifier(self, x, y):
         """Generate height based on Perlin noise."""
         # Scale down coordinates more for height to create smoother terrain
-        x, y = x / 80.0, y / 80.0  # Reduced scale factor for more dramatic changes
+        x, y = x / 50.0, y / 50.0  # Reduced scale factor for more dramatic changes
         
         # Get grid cell coordinates
         x0, y0 = int(math.floor(x)), int(math.floor(y))
@@ -73,12 +81,12 @@ class Polygraph3DClassifier(GraphClassifier):
         
         n0 = self.dot_grid_gradient(x0, y1, x, y)
         n1 = self.dot_grid_gradient(x1, y1, x, y)
-        ix1 = self.interpolate(n0, n1, sx)
+        ix1 = self.interpolate(n0, n1, sy)
         
         value = self.interpolate(ix0, ix1, sy)
         
         # Scale to -10 to 10 range with more dramatic peaks and valleys
-        return value * 15  # Increased multiplier for more dramatic height changes
+        return value * 20  # Increased multiplier for more dramatic height changes
     
     def sine_wave_height_classifier(self, x, y):
         """Generate height based on sine waves."""
@@ -169,6 +177,56 @@ class Polygraph3DClassifier(GraphClassifier):
                 plateau_height = height_factor / (1 + math.exp(sharpness * 1.5 * (dist - size)))
                 height += plateau_height
         
+        # Add ridges (elongated mountains along a direction)
+        for rx, ry, length, width, angle, height_factor in self.terrain_params['ridges']:
+            # Calculate distance to the ridge line
+            # Rotate the point around the ridge center
+            angle_rad = math.radians(angle)
+            cos_angle = math.cos(angle_rad)
+            sin_angle = math.sin(angle_rad)
+            
+            # Translate to ridge center
+            tx = x - rx
+            ty = y - ry
+            
+            # Rotate
+            rx_rot = tx * cos_angle + ty * sin_angle
+            ry_rot = -tx * sin_angle + ty * cos_angle
+            
+            # Check if within ridge length
+            if abs(rx_rot) < length / 2:
+                # Calculate distance to ridge line
+                dist = abs(ry_rot)
+                if dist < width:
+                    # Bell curve for the ridge
+                    ridge_height = height_factor * math.exp(-(dist**2) / (0.5 * width**2))
+                    height += ridge_height
+        
+        # Add canyons (elongated valleys)
+        for cx, cy, length, width, angle, depth_factor in self.terrain_params['canyons']:
+            # Calculate distance to the canyon line
+            # Rotate the point around the canyon center
+            angle_rad = math.radians(angle)
+            cos_angle = math.cos(angle_rad)
+            sin_angle = math.sin(angle_rad)
+            
+            # Translate to canyon center
+            tx = x - cx
+            ty = y - cy
+            
+            # Rotate
+            cx_rot = tx * cos_angle + ty * sin_angle
+            cy_rot = -tx * sin_angle + ty * cos_angle
+            
+            # Check if within canyon length
+            if abs(cx_rot) < length / 2:
+                # Calculate distance to canyon line
+                dist = abs(cy_rot)
+                if dist < width:
+                    # Inverted bell curve for the canyon
+                    canyon_depth = -depth_factor * math.exp(-(dist**2) / (0.5 * width**2))
+                    height += canyon_depth
+        
         # Add some small-scale noise for texture
         noise = (math.sin(x/8) * math.cos(y/8)) * 1.0
         height += noise
@@ -232,17 +290,52 @@ class Polygraph3DPlugin(Plugin):
         # Generate height using the classifier
         height = self.classifier.get_height(x, y)
         
-        # Clamp to min/max height settings
-        height = max(self.min_height, min(self.max_height, height))
+        # Apply terrain smoothing by averaging with neighboring points
+        # This creates more natural-looking transitions between heights
+        smoothed_height = height
         
-        # Add a small random variation to ensure no two adjacent positions have exactly the same height
-        import random
-        height += random.uniform(-0.5, 0.5)
+        # Sample neighboring points in a small radius
+        neighbor_count = 0
+        neighbor_sum = 0
+        
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue  # Skip the center point (already counted in height)
+                
+                # Get neighboring height
+                nx, ny = x + dx, y + dy
+                neighbor_key = f"{nx},{ny}"
+                
+                if neighbor_key in self.height_map:
+                    neighbor_sum += self.height_map[neighbor_key]
+                    neighbor_count += 1
+        
+        # If we have neighbors, blend the height with the average of neighbors
+        if neighbor_count > 0:
+            neighbor_avg = neighbor_sum / neighbor_count
+            # Blend factor determines how much smoothing to apply (0.7 = 70% original, 30% neighbors)
+            blend_factor = 0.7
+            smoothed_height = height * blend_factor + neighbor_avg * (1 - blend_factor)
+        
+        # Clamp to min/max height settings
+        smoothed_height = max(self.min_height, min(self.max_height, smoothed_height))
+        
+        # Add a small deterministic variation to ensure no two adjacent positions have exactly the same height
+        import hashlib
+        # Create a hash of the coordinates
+        hash_input = f"{x}_{y}".encode('utf-8')
+        hash_value = hashlib.md5(hash_input).hexdigest()
+        # Convert first 8 chars of hash to a float between -0.5 and 0.5 (reduced from -0.8 to 0.8)
+        hash_float = int(hash_value[:8], 16) / 0xffffffff * 1.0 - 0.5
+        
+        # Apply the variation (with reduced impact for smoother terrain)
+        smoothed_height += hash_float * 0.6
         
         # Cache the height
-        self.height_map[key] = height
+        self.height_map[key] = smoothed_height
         
-        return height
+        return smoothed_height
     
     def clear_height_cache(self):
         """Clear the height cache when the player moves significantly."""
@@ -300,13 +393,19 @@ class Polygraph3DPlugin(Plugin):
                     # Determine color based on character
                     color = gui_plugin.get_color_for_char(char, world_x, world_y)
                     
-                    # Create a 3D character object
-                    char_obj = Character3D(char, world_x - gui_plugin.game.world_x, world_y - gui_plugin.game.world_y, color)
-                    
-                    # Override the height with our calculated height - using configurable settings
+                    # Calculate the visual height (scaled for better visibility)
                     # Apply a more dramatic height scaling to make differences more visible
                     normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
-                    char_obj.height = 0.1 + normalized_height * (10.0 / self.height_scale)
+                    visual_height = 0.1 + normalized_height * (10.0 / self.height_scale)
+                    
+                    # Create a 3D character object with the explicit height value
+                    char_obj = Character3D(
+                        char, 
+                        world_x - gui_plugin.game.world_x, 
+                        world_y - gui_plugin.game.world_y, 
+                        color,
+                        height=visual_height  # Pass height directly
+                    )
                     
                     # Add to the character map
                     with gui_plugin.lock:
@@ -518,12 +617,19 @@ class Polygraph3DPlugin(Plugin):
                             # Determine color based on character
                             color = self_gui.get_color_for_char(char, world_x, world_y)
                             
-                            # Create a 3D character object
-                            char_obj = Character3D(char, world_x - self_gui.game.world_x, world_y - self_gui.game.world_y, color)
-                            
-                            # Override the height with our calculated height - using configurable settings
+                            # Calculate the visual height (scaled for better visibility)
+                            # Apply a more dramatic height scaling to make differences more visible
                             normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
-                            char_obj.height = 0.1 + normalized_height * (10.0 / self.height_scale)
+                            visual_height = 0.1 + normalized_height * (10.0 / self.height_scale)
+                            
+                            # Create a 3D character object with the explicit height value
+                            char_obj = Character3D(
+                                char, 
+                                world_x - self_gui.game.world_x, 
+                                world_y - self_gui.game.world_y, 
+                                color,
+                                height=visual_height  # Pass height directly
+                            )
                             
                             # Add to the character map
                             with self_gui.lock:

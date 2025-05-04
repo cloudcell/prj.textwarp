@@ -111,7 +111,7 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "Network", "Exit"],
+            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "3D Visualization Settings", "Network", "Exit"],
             "plugins": []  # Will be populated with plugin names
         }
         
@@ -399,7 +399,25 @@ class TextAdventure:
                     self.message_timeout = 3.0
                     self.in_menu = False
                     self.needs_redraw = True
-            elif self.menu_selection == 4:  # Network
+            elif self.menu_selection == 4:  # 3D Visualization Settings
+                # Check if the 3D Visualization plugin is active
+                gui3d_plugin = None
+                for plugin in self.plugins:
+                    if plugin.__class__.__name__ == "GUI3DPlugin" and plugin.active:
+                        gui3d_plugin = plugin
+                        break
+                
+                if gui3d_plugin:
+                    # Show 3D Visualization settings menu
+                    # The plugin will handle menu state management internally
+                    gui3d_plugin.show_settings_menu()
+                else:
+                    # Show message that plugin is not active
+                    self.message = "3D Visualization plugin is not active. Please activate it first."
+                    self.message_timeout = 3.0
+                    self.in_menu = False
+                    self.needs_redraw = True
+            elif self.menu_selection == 5:  # Network
                 # Find the network plugin
                 network_plugin = None
                 for plugin in self.plugins:
@@ -418,7 +436,7 @@ class TextAdventure:
                     # Return to menu mode
                     self.in_menu = True
                     self.needs_redraw = True
-            elif self.menu_selection == 5:  # Exit
+            elif self.menu_selection == 6:  # Exit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
