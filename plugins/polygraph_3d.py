@@ -49,7 +49,7 @@ class Polygraph3DClassifier(GraphClassifier):
     def get_height(self, x, y):
         """
         Get the height value for coordinates (x, y).
-        Returns a value between -10 and 10.
+        The height range is determined by the plugin settings.
         """
         # Determine which region the point belongs to
         region_idx = self.get_region(x, y)
@@ -58,8 +58,9 @@ class Polygraph3DClassifier(GraphClassifier):
         classifier = self.height_classifiers[region_idx % len(self.height_classifiers)]
         height_value = classifier(x, y)
         
-        # Ensure the height is in the range [-10, 10]
-        return max(-10, min(10, height_value))
+        # The raw height value is in the range [-10, 10]
+        # We'll let the plugin scale this to the desired min/max height
+        return height_value
     
     def perlin_height_classifier(self, x, y):
         """Generate height based on Perlin noise."""
@@ -286,56 +287,27 @@ class Polygraph3DPlugin(Plugin):
         key = f"{x},{y}"
         if key in self.height_map:
             return self.height_map[key]
-        
+
         # Generate height using the classifier
-        height = self.classifier.get_height(x, y)
+        raw_height = self.classifier.get_height(x, y)
         
-        # Apply terrain smoothing by averaging with neighboring points
-        # This creates more natural-looking transitions between heights
-        smoothed_height = height
+        # Scale the raw height (which is in range [-10, 10]) to our min/max height settings
+        # First normalize to [0, 1] range
+        normalized_height = (raw_height + 10) / 20.0
         
-        # Sample neighboring points in a small radius
-        neighbor_count = 0
-        neighbor_sum = 0
+        # Then scale to our desired range
+        height = self.min_height + normalized_height * (self.max_height - self.min_height)
         
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
-                    continue  # Skip the center point (already counted in height)
-                
-                # Get neighboring height
-                nx, ny = x + dx, y + dy
-                neighbor_key = f"{nx},{ny}"
-                
-                if neighbor_key in self.height_map:
-                    neighbor_sum += self.height_map[neighbor_key]
-                    neighbor_count += 1
-        
-        # If we have neighbors, blend the height with the average of neighbors
-        if neighbor_count > 0:
-            neighbor_avg = neighbor_sum / neighbor_count
-            # Blend factor determines how much smoothing to apply (0.7 = 70% original, 30% neighbors)
-            blend_factor = 0.7
-            smoothed_height = height * blend_factor + neighbor_avg * (1 - blend_factor)
-        
-        # Clamp to min/max height settings
-        smoothed_height = max(self.min_height, min(self.max_height, smoothed_height))
-        
-        # Add a small deterministic variation to ensure no two adjacent positions have exactly the same height
-        import hashlib
-        # Create a hash of the coordinates
-        hash_input = f"{x}_{y}".encode('utf-8')
-        hash_value = hashlib.md5(hash_input).hexdigest()
-        # Convert first 8 chars of hash to a float between -0.5 and 0.5 (reduced from -0.8 to 0.8)
-        hash_float = int(hash_value[:8], 16) / 0xffffffff * 1.0 - 0.5
-        
-        # Apply the variation (with reduced impact for smoother terrain)
-        smoothed_height += hash_float * 0.6
+        # Add a small deterministic variation based on coordinates to ensure
+        # no two adjacent positions have exactly the same height
+        # Use a hash of the coordinates to get a consistent but varied value
+        variation = (hash(key) % 1000) / 2000.0 - 0.25  # Range: -0.25 to 0.25
+        height += variation
         
         # Cache the height
-        self.height_map[key] = smoothed_height
-        
-        return smoothed_height
+        self.height_map[key] = height
+
+        return height
     
     def clear_height_cache(self):
         """Clear the height cache when the player moves significantly."""
