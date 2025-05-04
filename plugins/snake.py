@@ -16,6 +16,7 @@ class Snake:
         self.direction = random.choice([(0, -1), (1, 0), (0, 1), (-1, 0)])
         self.time_to_move = 0
         self.move_interval = 0.5  # seconds between moves
+        self.rattles = 0  # Number of rattles (red dots) at the end of the snake
         
     def update(self, dt):
         """Update the snake's position."""
@@ -48,8 +49,8 @@ class Snake:
             # Add the new head
             self.body.insert(0, new_head)
             
-            # Remove the tail if we're longer than our length
-            while len(self.body) > self.length:
+            # Remove the tail if we're longer than our length plus rattles
+            while len(self.body) > self.length + self.rattles:
                 self.body.pop()
                 
     def render(self, screen):
@@ -60,16 +61,47 @@ class Snake:
             screen_y = y + self.game.max_y // 2
             
             if 0 <= screen_x < self.game.max_x and 0 <= screen_y < self.game.max_y:
-                # Use different characters for head and body
-                char = 'S' if i == 0 else 's'
+                # Determine character and color based on position
+                if i == 0:
+                    # Head
+                    char = 'S'
+                    color = self.game.snake_color
+                elif i >= self.length:
+                    # Rattle (red dot)
+                    char = '.'
+                    color = curses.color_pair(1)  # Red color
+                else:
+                    # Body
+                    char = 's'
+                    color = self.game.snake_color
+                
                 # Add a visual indicator when snake is at max length
                 attr = curses.A_BOLD if self.length >= self.max_length else 0
+                
                 try:
-                    # Use the snake color from the game
-                    screen.addstr(screen_y, screen_x, char, self.game.snake_color | attr)
+                    # Use the appropriate color
+                    screen.addstr(screen_y, screen_x, char, color | attr)
                 except:
                     # Ignore errors from writing to the bottom-right corner
                     pass
+                    
+    def bite(self, other_snake):
+        """Bite another snake, gaining rattles and causing the other snake to lose a segment."""
+        # Add two rattles to this snake
+        self.rattles += 2
+        
+        # Remove a middle segment from the other snake if possible
+        if len(other_snake.body) > 3:  # Only remove if the snake has more than head + 2 body segments
+            middle_index = len(other_snake.body) // 2
+            other_snake.body.pop(middle_index)
+            other_snake.length -= 1
+            
+            # Show a message
+            self.game.message = f"Snake bite! One snake lost a segment, another gained rattles."
+            self.game.message_timeout = 2.0
+            
+            return True
+        return False
 
 class SnakePlugin(Plugin):
     """A plugin that adds snakes to the game world."""
@@ -89,6 +121,9 @@ class SnakePlugin(Plugin):
         for snake in self.snakes:
             snake.update(dt)
             
+        # Check for snake collisions
+        self.check_snake_collisions()
+            
         # Maybe spawn a new snake
         self.spawn_timer -= dt
         if self.spawn_timer <= 0:
@@ -102,6 +137,25 @@ class SnakePlugin(Plugin):
             
         for snake in self.snakes:
             snake.render(screen)
+            
+    def check_snake_collisions(self):
+        """Check if any snake's head is colliding with another snake's body."""
+        for i, snake1 in enumerate(self.snakes):
+            if len(snake1.body) == 0:
+                continue
+                
+            head1 = snake1.body[0]
+            
+            for j, snake2 in enumerate(self.snakes):
+                if i == j or len(snake2.body) < 2:
+                    continue
+                    
+                # Check if snake1's head is on any of snake2's body segments (excluding head)
+                for k, segment in enumerate(snake2.body[1:], 1):
+                    if head1 == segment:
+                        # Snake1 bites snake2
+                        snake1.bite(snake2)
+                        break
             
     def try_spawn_snake(self):
         """Try to spawn a new snake at a random @ character."""

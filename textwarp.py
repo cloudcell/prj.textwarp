@@ -6,6 +6,7 @@ import os
 import json
 import hashlib
 import random
+import signal
 from plugins.base import Plugin
 from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
@@ -23,6 +24,8 @@ class TextAdventure:
         self.menu_color = None
         self.snake_color = None
         self.fuel_color = None
+        self.snake_indicator_color = None
+        self.fps_color = None
         self.max_y = 0
         self.max_x = 0
         self.last_update = time.time()
@@ -39,6 +42,12 @@ class TextAdventure:
         self.last_key = 0
         # Flag to indicate if redraw is needed
         self.needs_redraw = True
+        # Flag to check for window resize
+        self.check_resize = True
+        # FPS tracking
+        self.frame_times = []
+        self.current_fps = 0
+        self.fps_update_timer = 0
         # Key state tracking for diagonal movement
         self.key_states = {
             curses.KEY_UP: False,
@@ -59,6 +68,12 @@ class TextAdventure:
             ord('2'): False,  # S
             ord('3'): False   # SE
         }
+        # Track when keys were last pressed
+        self.key_press_time = {}
+        for key in self.key_states:
+            self.key_press_time[key] = 0
+        # Key timeout (how long a key remains "pressed" after it's released)
+        self.key_timeout = 0.1  # seconds
         # Direction mapping for numeric keypad
         self.numpad_directions = {
             ord('7'): (-1, -1),  # NW
@@ -145,6 +160,8 @@ class TextAdventure:
         curses.init_pair(5, curses.COLOR_GREEN, -1)  # Menu color
         curses.init_pair(6, curses.COLOR_BLUE, -1)  # Snake color
         curses.init_pair(7, curses.COLOR_CYAN, -1)  # Fuel color
+        curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_BLACK)  # Snake indicator with black background
+        curses.init_pair(9, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # FPS counter with black background
         
         self.player_color = curses.color_pair(1)
         self.background_color = curses.color_pair(2)
@@ -154,6 +171,8 @@ class TextAdventure:
         self.menu_color = curses.color_pair(5)
         self.snake_color = curses.color_pair(6)
         self.fuel_color = curses.color_pair(7)
+        self.snake_indicator_color = curses.color_pair(8)
+        self.fps_color = curses.color_pair(9)
         
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
@@ -163,110 +182,87 @@ class TextAdventure:
         
     def handle_input(self):
         # Get input
-        key = self.screen.getch()
-        self.last_key = key  # Store for debugging
+        try:
+            key = self.screen.getch()
+        except:
+            # Handle any errors with getch()
+            key = -1
         
-        # Handle menu input if in menu
+        # Skip input handling if in menu
         if self.in_menu:
-            self.handle_menu_input(key)
-            # Clear any key states to prevent movement when exiting menu
-            for k in self.key_states:
-                self.key_states[k] = False
-            # Reset movement direction
-            self.dx = 0
-            self.dy = 0
-            return
-        
-        # Toggle menu with ESC key
-        if key == 27:  # ESC key
-            self.in_menu = True
-            self.current_menu = "main"
-            self.menu_selection = 0
-            self.needs_redraw = True
-            # Clear any key states to prevent movement when entering menu
-            for k in self.key_states:
-                self.key_states[k] = False
-            # Reset movement direction
-            self.dx = 0
-            self.dy = 0
+            if key != -1:
+                self.handle_menu_input(key)
             return
             
-        # Update key states based on key press/release
-        if key != -1:  # A key was pressed
-            if key in self.key_states:
-                self.key_states[key] = True
+        # Store last key for debugging
+        if key != -1:
+            self.last_key = key
+            
+        # Handle special keys
+        if key == 27:  # ESC key
+            # Open menu
+            self.in_menu = True
+            self.menu_selection = 0
+            self.needs_redraw = True
+            # Clear movement when entering menu
+            self.dx = 0
+            self.dy = 0
+            # Clear key states
+            for k in self.key_states:
+                self.key_states[k] = False
+        elif key == ord(' '):  # Space key
+            # Create a space at the current position
+            space_key = self.get_space_key(self.world_x, self.world_y)
+            self.spaces[space_key] = (self.world_x, self.world_y)
+            self.save_spaces()
+            self.message = f"Space created at ({self.world_x}, {self.world_y})"
+            self.message_timeout = 2.0
+            self.needs_redraw = True
+        elif key in self.key_states:
+            # Update key state (pressed)
+            self.key_states[key] = True
+            self.key_press_time[key] = time.time()
         
-        # Reset movement direction
+        # Calculate movement direction based on key states
         self.dx = 0
         self.dy = 0
         
-        # Handle space key to create a space at current position
-        if key == ord(' '):
-            # Create a space at the current world position
-            space_key = self.get_space_key(self.world_x, self.world_y)
-            self.spaces[space_key] = True
-            self.save_spaces()
-            self.needs_redraw = True
-            self.message = f"Space created at ({self.world_x}, {self.world_y})"
-            self.message_timeout = time.time() + 2  # Show message for 2 seconds
-            return
-        
-        # Check for numpad input first (takes precedence)
-        if key in self.numpad_directions:
-            self.dx, self.dy = self.numpad_directions[key]
-        else:
-            # Check vertical movement
-            if (self.key_states[curses.KEY_UP] or self.key_states[ord('w')] or 
-                self.key_states[ord('8')]):
-                self.dy = -1
-            elif (self.key_states[curses.KEY_DOWN] or self.key_states[ord('s')] or 
-                  self.key_states[ord('2')]):
-                self.dy = 1
+        # Arrow keys
+        if self.key_states.get(curses.KEY_UP, False):
+            self.dy = -1
+        if self.key_states.get(curses.KEY_DOWN, False):
+            self.dy = 1
+        if self.key_states.get(curses.KEY_LEFT, False):
+            self.dx = -1
+        if self.key_states.get(curses.KEY_RIGHT, False):
+            self.dx = 1
+            
+        # WASD keys
+        if self.key_states.get(ord('w'), False):
+            self.dy = -1
+        if self.key_states.get(ord('s'), False):
+            self.dy = 1
+        if self.key_states.get(ord('a'), False):
+            self.dx = -1
+        if self.key_states.get(ord('d'), False):
+            self.dx = 1
+            
+        # Numeric keypad
+        for numkey, (dx, dy) in self.numpad_directions.items():
+            if self.key_states.get(numkey, False):
+                self.dx = dx
+                self.dy = dy
                 
-            # Check horizontal movement
-            if (self.key_states[curses.KEY_LEFT] or self.key_states[ord('a')] or 
-                self.key_states[ord('4')]):
-                self.dx = -1
-            elif (self.key_states[curses.KEY_RIGHT] or self.key_states[ord('d')] or 
-                  self.key_states[ord('6')]):
-                self.dx = 1
-            
-            # Check diagonal movement
-            if self.key_states[ord('7')]:  # NW
-                self.dx = -1
-                self.dy = -1
-            elif self.key_states[ord('9')]:  # NE
-                self.dx = 1
-                self.dy = -1
-            elif self.key_states[ord('1')]:  # SW
-                self.dx = -1
-                self.dy = 1
-            elif self.key_states[ord('3')]:  # SE
-                self.dx = 1
-                self.dy = 1
+        # Normalize diagonal movement
+        if self.dx != 0 and self.dy != 0:
+            self.dx *= 0.7071  # 1/sqrt(2)
+            self.dy *= 0.7071
         
-        # Handle quit
-        if key == ord('q') or key == ord('Q'):
-            self.running = False
-            
-        # If any movement is happening, force a redraw
-        if self.dx != 0 or self.dy != 0:
-            self.needs_redraw = True
-            # Move the world immediately by 1 cell in the pressed direction
-            self.world_x += self.dx
-            self.world_y += self.dy
-            
-            # Display direction in panel
-            direction = ""
-            if self.dy < 0:
-                direction += "N"
-            elif self.dy > 0:
-                direction += "S"
-            if self.dx > 0:
-                direction += "E"
-            elif self.dx < 0:
-                direction += "W"
-            self.direction = direction
+        # Check for key timeouts
+        current_time = time.time()
+        for key in list(self.key_states.keys()):
+            if self.key_states[key] and current_time - self.key_press_time.get(key, 0) > self.key_timeout:
+                self.key_states[key] = False
 
     def handle_menu_input(self, key):
         current_menu = self.menus[self.current_menu]
@@ -319,6 +315,9 @@ class TextAdventure:
         dt = now - self.last_update
         self.last_update = now
         
+        # Update FPS calculation
+        self.update_fps(dt)
+        
         # Update message timeout
         if self.message and self.message_timeout > 0:
             self.message_timeout -= dt
@@ -362,6 +361,31 @@ class TextAdventure:
         elif self.dx < 0:
             self.direction += "W"
 
+    def update_fps(self, dt):
+        """Update the FPS calculation."""
+        # Add the current frame time to the list
+        self.frame_times.append(dt)
+        
+        # Keep only the last 60 frames for the calculation
+        if len(self.frame_times) > 60:
+            self.frame_times.pop(0)
+            
+        # Update the FPS value every 0.5 seconds
+        self.fps_update_timer += dt
+        if self.fps_update_timer >= 0.5:
+            self.fps_update_timer = 0
+            
+            # Calculate average frame time and convert to FPS
+            if self.frame_times:
+                avg_frame_time = sum(self.frame_times) / len(self.frame_times)
+                if avg_frame_time > 0:
+                    self.current_fps = 1.0 / avg_frame_time
+                else:
+                    self.current_fps = 0
+            
+            # Force redraw to update the FPS display
+            self.needs_redraw = True
+
     def check_for_fuel(self):
         """Check if the player is on a fuel ('&') character and collect it."""
         # Get the character at the player's position
@@ -389,16 +413,34 @@ class TextAdventure:
         if not self.needs_redraw:
             return
             
+        # Clear screen
         self.screen.clear()
         
-        # Draw the game world first (even when menu is active)
+        # Render game world
         self.render_game_world()
         
-        # Draw menu on top if active
+        # Render menu if active
         if self.in_menu:
             self.render_menu()
-            
-        # Update screen
+        
+        # Draw top menu bar
+        self.screen.addstr(0, 0, " " * (self.max_x - 1), self.menu_color)
+        menu_text = "TextWarp Adventure | Press ESC for Menu"
+        self.screen.addstr(0, (self.max_x - len(menu_text)) // 2, menu_text, self.menu_color)
+        
+        # Draw snake indicator on second line
+        snake_count = sum(1 for plugin in self.plugins if isinstance(plugin, SnakePlugin) and plugin.active for _ in plugin.snakes)
+        snake_indicator = f"Snakes Detected: {snake_count}"
+        # Fill the entire line with black background
+        self.screen.addstr(1, 0, " " * (self.max_x - 1), self.snake_indicator_color)
+        # Draw the indicator text
+        self.screen.addstr(1, 2, snake_indicator, self.snake_indicator_color)
+        
+        # Draw FPS counter
+        fps_text = f"FPS: {self.current_fps:.2f}"
+        self.screen.addstr(1, self.max_x - len(fps_text) - 2, fps_text, self.fps_color)
+        
+        # Refresh screen
         self.screen.refresh()
         
         # Reset redraw flag
@@ -464,11 +506,6 @@ class TextAdventure:
         
         # Draw panel text
         self.screen.addstr(panel_y, 1, panel_text[:self.max_x - 3], self.panel_color)
-        
-        # Draw menu bar at top
-        self.screen.addstr(0, 0, " " * (self.max_x - 1), self.menu_color)
-        menu_text = "TextWarp Adventure | Press ESC for Menu"
-        self.screen.addstr(0, (self.max_x - len(menu_text)) // 2, menu_text, self.menu_color)
 
     def render_menu(self):
         # Draw semi-transparent overlay
@@ -543,11 +580,47 @@ class TextAdventure:
         except Exception as e:
             print(f"Error saving spaces: {e}")
 
+    def check_window_resize(self):
+        """Check if the terminal window has been resized and update accordingly."""
+        # Get current terminal dimensions
+        new_y, new_x = self.screen.getmaxyx()
+        
+        # Check if dimensions have changed
+        if new_y != self.max_y or new_x != self.max_x:
+            # Update dimensions
+            self.max_y = new_y
+            self.max_x = new_x
+            
+            # Clear screen and force redraw
+            self.screen.clear()
+            self.needs_redraw = True
+            
+            # Resize the curses window
+            curses.resizeterm(new_y, new_x)
+            
+            # Show a message about the resize
+            self.message = f"Window resized to {new_x}x{new_y}"
+            self.message_timeout = 2.0
+            
+            # Return True if resized
+            return True
+            
+        # Return False if not resized
+        return False
+
     def run(self):
         try:
             self.setup()
             
+            # Set up signal handler for window resize
+            signal.signal(signal.SIGWINCH, self.handle_resize_signal)
+            
             while self.running:
+                # Check for window resize
+                if self.check_resize:
+                    self.check_window_resize()
+                    self.check_resize = False
+                
                 self.handle_input()
                 self.update()
                 self.render()
@@ -558,8 +631,15 @@ class TextAdventure:
         except Exception as e:
             self.cleanup()
             print(f"An error occurred: {e}")
+            # Print stack trace for debugging
+            import traceback
+            traceback.print_exc()
         finally:
             self.cleanup()
+            
+    def handle_resize_signal(self, signum, frame):
+        """Signal handler for SIGWINCH (window resize)."""
+        self.check_resize = True
 
 def main():
     game = TextAdventure()
