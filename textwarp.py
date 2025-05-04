@@ -10,6 +10,7 @@ import signal
 from plugins.base import Plugin
 from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
+from plugins.network import NetworkPlugin
 
 class TextAdventure:
     def __init__(self):
@@ -101,7 +102,7 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Exit"],
+            "main": ["Resume Game", "Plugin Management", "Network", "Exit"],
             "plugins": []  # Will be populated with plugin names
         }
         
@@ -114,6 +115,7 @@ class TextAdventure:
         # Add plugins here
         self.plugins.append(SnakePlugin(self))
         self.plugins.append(GraphClassifierPlugin(self))
+        self.plugins.append(NetworkPlugin(self))
         
         # Update plugin menu
         self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
@@ -284,13 +286,34 @@ class TextAdventure:
             self.needs_redraw = True
 
     def handle_menu_selection(self):
+        """Handle menu item selection."""
         if self.current_menu == "main":
             if self.menu_selection == 0:  # Resume Game
                 self.in_menu = False
+                self.needs_redraw = True
             elif self.menu_selection == 1:  # Plugin Management
                 self.current_menu = "plugins"
                 self.menu_selection = 0
-            elif self.menu_selection == 2:  # Exit
+            elif self.menu_selection == 2:  # Network
+                # Find the network plugin
+                network_plugin = None
+                for plugin in self.plugins:
+                    if isinstance(plugin, NetworkPlugin):
+                        network_plugin = plugin
+                        break
+                
+                if network_plugin:
+                    # Temporarily exit menu mode
+                    self.in_menu = False
+                    self.needs_redraw = True
+                    
+                    # Show network menu
+                    network_plugin.show_network_menu()
+                    
+                    # Return to menu mode
+                    self.in_menu = True
+                    self.needs_redraw = True
+            elif self.menu_selection == 3:  # Exit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
@@ -300,14 +323,15 @@ class TextAdventure:
                     plugin.deactivate()
                 else:
                     plugin.activate()
-                self.save_plugin_config()
                 # Update menu text
-                self.menus["plugins"][self.menu_selection] = plugin.name + (" [Active]" if plugin.active else " [Inactive]")
-            else:  # Back option
+                self.menus["plugins"][self.menu_selection] = f"{plugin.name} {'[Active]' if plugin.active else '[Inactive]'}"
+                self.needs_redraw = True
+                # Save plugin config
+                self.save_plugin_config()
+            else:
+                # Back to main menu
                 self.current_menu = "main"
                 self.menu_selection = 0
-        
-        self.needs_redraw = True
 
     def update(self):
         # Calculate time delta
