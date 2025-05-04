@@ -65,7 +65,8 @@ class Snake:
                 # Add a visual indicator when snake is at max length
                 attr = curses.A_BOLD if self.length >= self.max_length else 0
                 try:
-                    screen.addstr(screen_y, screen_x, char, attr)
+                    # Use the snake color from the game
+                    screen.addstr(screen_y, screen_x, char, self.game.snake_color | attr)
                 except:
                     # Ignore errors from writing to the bottom-right corner
                     pass

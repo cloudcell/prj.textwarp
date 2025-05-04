@@ -21,6 +21,7 @@ class TextAdventure:
         self.zero_color = None
         self.panel_color = None
         self.menu_color = None
+        self.snake_color = None
         self.max_y = 0
         self.max_x = 0
         self.last_update = time.time()
@@ -125,30 +126,34 @@ class TextAdventure:
         # Initialize curses
         self.screen = curses.initscr()
         curses.start_color()
+        curses.use_default_colors()
+        curses.curs_set(0)  # Hide cursor
         curses.noecho()
         curses.cbreak()
-        curses.curs_set(0)  # Hide cursor
-        self.screen.keypad(True)  # Enable keypad mode for special keys
-        self.screen.timeout(50)  # Non-blocking input with 50ms timeout
+        self.screen.keypad(True)
+        
+        # Initialize colors
+        curses.init_pair(1, curses.COLOR_RED, -1)  # Player color
+        curses.init_pair(2, 8, -1)  # Grey background
+        curses.init_pair(3, curses.COLOR_GREEN, -1)  # @ symbol color
+        curses.init_pair(4, curses.COLOR_YELLOW, -1)  # 0 symbol color
+        curses.init_pair(5, curses.COLOR_GREEN, -1)  # Menu color
+        curses.init_pair(6, curses.COLOR_BLUE, -1)  # Snake color
+        
+        self.player_color = curses.color_pair(1)
+        self.background_color = curses.color_pair(2)
+        self.at_symbol_color = curses.color_pair(3)
+        self.zero_color = curses.color_pair(4)
+        self.panel_color = curses.color_pair(2)
+        self.menu_color = curses.color_pair(5)
+        self.snake_color = curses.color_pair(6)
         
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
         
         # Setup colors
-        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)      # Player color
-        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)    # Background color
-        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)    # @ symbol color
-        curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLUE)    # Panel color
-        curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)   # 0 character color
-        curses.init_pair(6, curses.COLOR_MAGENTA, curses.COLOR_BLACK)  # Snake color
-        curses.init_pair(7, curses.COLOR_BLACK, curses.COLOR_GREEN)    # Menu color
-        self.player_color = curses.color_pair(1)
-        self.background_color = curses.color_pair(2)
-        self.at_symbol_color = curses.color_pair(3)
-        self.panel_color = curses.color_pair(4)
-        self.zero_color = curses.color_pair(5)
-        self.menu_color = curses.color_pair(7)
-
+        self.screen.timeout(50)  # Non-blocking input with 50ms timeout
+        
     def handle_input(self):
         # Get input
         key = self.screen.getch()
