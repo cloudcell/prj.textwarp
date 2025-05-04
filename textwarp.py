@@ -168,6 +168,7 @@ class TextAdventure:
         curses.init_pair(8, curses.COLOR_MAGENTA, -1)  # Magenta for menu
         curses.init_pair(9, 208, -1)  # Orange for eggs ('0')
         curses.init_pair(10, 94, -1)  # Brown for dots ('.')
+        curses.init_pair(11, 8, -1)  # Grey for background
         
         self.player_color = curses.color_pair(1)
         self.panel_color = curses.color_pair(2)
@@ -179,6 +180,7 @@ class TextAdventure:
         self.fps_color = curses.color_pair(4)
         self.menu_color = curses.color_pair(8)
         self.dot_color = curses.color_pair(10)  # Brown for dots
+        self.background_color = curses.color_pair(11)  # Grey for background
         
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
