@@ -5,6 +5,163 @@ import math
 import os
 import json
 import hashlib
+import random
+from abc import ABC, abstractmethod
+
+# Base Plugin class
+class Plugin(ABC):
+    def __init__(self, game):
+        self.game = game
+        self.active = False
+        
+    @property
+    def name(self):
+        return self.__class__.__name__
+        
+    @abstractmethod
+    def update(self, dt):
+        pass
+        
+    @abstractmethod
+    def render(self, screen):
+        pass
+    
+    def activate(self):
+        self.active = True
+        
+    def deactivate(self):
+        self.active = False
+
+# Snake Plugin
+class SnakePlugin(Plugin):
+    def __init__(self, game):
+        super().__init__(game)
+        self.snakes = []
+        self.spawn_timer = 0
+        self.spawn_interval = 5.0  # Spawn a new snake every 5 seconds
+        
+    def update(self, dt):
+        if not self.active:
+            return
+            
+        # Update spawn timer
+        self.spawn_timer += dt
+        if self.spawn_timer >= self.spawn_interval:
+            self.spawn_timer = 0
+            self.try_spawn_snake()
+            
+        # Update all snakes
+        for snake in self.snakes[:]:
+            snake.update(dt)
+            if not snake.alive:
+                self.snakes.remove(snake)
+                
+    def render(self, screen):
+        if not self.active:
+            return
+            
+        # Render all snakes
+        for snake in self.snakes:
+            snake.render(screen)
+            
+    def try_spawn_snake(self):
+        # Find all @ symbols on screen
+        at_symbols = []
+        player_y, player_x = self.game.max_y // 2, self.game.max_x // 2
+        
+        for y in range(self.game.max_y - 2):
+            for x in range(self.game.max_x - 1):
+                # Calculate world coordinates
+                world_y = y - player_y + self.game.world_y
+                world_x = x - player_x + self.game.world_x
+                
+                # Skip if this position has a space
+                space_key = self.game.get_space_key(world_x, world_y)
+                if space_key in self.game.spaces:
+                    continue
+                
+                # Calculate character at this position
+                loc_id = abs(world_y * 100 + world_x) % 127
+                char_code = (loc_id % 94) + 33
+                char = chr(char_code)
+                
+                if char == '@':
+                    at_symbols.append((world_x, world_y, x, y))
+        
+        # Spawn a snake at a random @ symbol
+        if at_symbols:
+            world_x, world_y, screen_x, screen_y = random.choice(at_symbols)
+            self.snakes.append(Snake(self.game, world_x, world_y, screen_x, screen_y))
+            
+            # Create a space where the snake spawned
+            space_key = self.game.get_space_key(world_x, world_y)
+            self.game.spaces[space_key] = True
+            self.game.save_spaces()
+
+class Snake:
+    def __init__(self, game, world_x, world_y, screen_x, screen_y):
+        self.game = game
+        self.segments = [(world_x, world_y)]
+        self.direction = random.choice([(0, 1), (1, 0), (0, -1), (-1, 0)])
+        self.move_timer = 0
+        self.move_interval = 0.5  # Move every 0.5 seconds
+        self.alive = True
+        self.length = 3
+        self.color = curses.color_pair(6)  # Snake color
+        
+    def update(self, dt):
+        self.move_timer += dt
+        if self.move_timer >= self.move_interval:
+            self.move_timer = 0
+            self.move()
+            
+    def move(self):
+        # Get current head position
+        head_x, head_y = self.segments[0]
+        
+        # Randomly change direction sometimes
+        if random.random() < 0.2:
+            self.direction = random.choice([(0, 1), (1, 0), (0, -1), (-1, 0)])
+            
+        # Calculate new head position
+        dx, dy = self.direction
+        new_x, new_y = head_x + dx, head_y + dy
+        
+        # Check if there's a 0 (egg) at the new position
+        player_y, player_x = self.game.max_y // 2, self.game.max_x // 2
+        loc_id = abs(new_y * 100 + new_x) % 127
+        char_code = (loc_id % 94) + 33
+        char = chr(char_code)
+        
+        # If there's an egg, eat it and grow
+        if char == '0':
+            self.length += 1
+            # Create a space where the egg was
+            space_key = self.game.get_space_key(new_x, new_y)
+            self.game.spaces[space_key] = True
+            self.game.save_spaces()
+        
+        # Add new head
+        self.segments.insert(0, (new_x, new_y))
+        
+        # Remove tail if snake is too long
+        while len(self.segments) > self.length:
+            self.segments.pop()
+            
+    def render(self, screen):
+        player_y, player_x = self.game.max_y // 2, self.game.max_x // 2
+        
+        # Draw all segments
+        for i, (world_x, world_y) in enumerate(self.segments):
+            # Convert world coordinates to screen coordinates
+            screen_x = world_x - self.game.world_x + player_x
+            screen_y = world_y - self.game.world_y + player_y
+            
+            # Check if segment is on screen
+            if 0 <= screen_y < self.game.max_y - 2 and 0 <= screen_x < self.game.max_x - 1:
+                # Draw head as 'S', body as 's'
+                char = 'S' if i == 0 else 's'
+                screen.addch(int(screen_y), int(screen_x), char, self.color)
 
 class TextAdventure:
     def __init__(self):
@@ -16,6 +173,7 @@ class TextAdventure:
         self.at_symbol_color = None
         self.zero_color = None
         self.panel_color = None
+        self.menu_color = None
         self.max_y = 0
         self.max_x = 0
         self.last_update = time.time()
@@ -69,6 +227,51 @@ class TextAdventure:
         # Message to display
         self.message = ""
         self.message_timeout = 0
+        
+        # Menu system
+        self.in_menu = False
+        self.current_menu = "main"
+        self.menu_selection = 0
+        self.menus = {
+            "main": ["Resume Game", "Plugin Management", "Exit"],
+            "plugins": []  # Will be populated with plugin names
+        }
+        
+        # Plugins
+        self.plugins = []
+        self.initialize_plugins()
+        self.load_plugin_config()
+
+    def initialize_plugins(self):
+        # Add plugins here
+        self.plugins.append(SnakePlugin(self))
+        
+        # Update plugin menu
+        self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
+
+    def load_plugin_config(self):
+        try:
+            if os.path.exists('plugins.json'):
+                with open('plugins.json', 'r') as f:
+                    config = json.load(f)
+                    for plugin in self.plugins:
+                        if plugin.name in config and config[plugin.name]:
+                            plugin.activate()
+                        else:
+                            plugin.deactivate()
+        except Exception as e:
+            print(f"Error loading plugin config: {e}")
+        
+        # Update plugin menu
+        self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
+
+    def save_plugin_config(self):
+        try:
+            config = {plugin.name: plugin.active for plugin in self.plugins}
+            with open('plugins.json', 'w') as f:
+                json.dump(config, f)
+        except Exception as e:
+            print(f"Error saving plugin config: {e}")
 
     def setup(self):
         # Initialize curses
@@ -84,26 +287,36 @@ class TextAdventure:
         self.max_y, self.max_x = self.screen.getmaxyx()
         
         # Setup colors
-        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)    # Player color
-        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)  # Background color
-        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)  # @ symbol color
-        curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLUE)  # Panel color
-        curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK) # 0 character color
+        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)      # Player color
+        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)    # Background color
+        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)    # @ symbol color
+        curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLUE)    # Panel color
+        curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)   # 0 character color
+        curses.init_pair(6, curses.COLOR_MAGENTA, curses.COLOR_BLACK)  # Snake color
+        curses.init_pair(7, curses.COLOR_BLACK, curses.COLOR_GREEN)    # Menu color
         self.player_color = curses.color_pair(1)
         self.background_color = curses.color_pair(2)
         self.at_symbol_color = curses.color_pair(3)
         self.panel_color = curses.color_pair(4)
         self.zero_color = curses.color_pair(5)
+        self.menu_color = curses.color_pair(7)
 
     def handle_input(self):
         # Get input
         key = self.screen.getch()
         self.last_key = key  # Store for debugging
         
-        # Reset all key states if Escape is pressed
+        # Handle menu input if in menu
+        if self.in_menu:
+            self.handle_menu_input(key)
+            return
+        
+        # Toggle menu with ESC key
         if key == 27:  # ESC key
-            for k in self.key_states:
-                self.key_states[k] = False
+            self.in_menu = True
+            self.current_menu = "main"
+            self.menu_selection = 0
+            self.needs_redraw = True
             return
             
         # Update key states based on key press/release
@@ -183,17 +396,70 @@ class TextAdventure:
                 direction += "W"
             self.direction = direction
 
+    def handle_menu_input(self, key):
+        current_menu = self.menus[self.current_menu]
+        
+        if key == curses.KEY_UP:
+            self.menu_selection = (self.menu_selection - 1) % len(current_menu)
+            self.needs_redraw = True
+        elif key == curses.KEY_DOWN:
+            self.menu_selection = (self.menu_selection + 1) % len(current_menu)
+            self.needs_redraw = True
+        elif key == 10 or key == 13:  # Enter key
+            self.handle_menu_selection()
+        elif key == 27:  # ESC key
+            if self.current_menu == "main":
+                self.in_menu = False
+            else:
+                self.current_menu = "main"
+                self.menu_selection = 0
+            self.needs_redraw = True
+
+    def handle_menu_selection(self):
+        if self.current_menu == "main":
+            if self.menu_selection == 0:  # Resume Game
+                self.in_menu = False
+            elif self.menu_selection == 1:  # Plugin Management
+                self.current_menu = "plugins"
+                self.menu_selection = 0
+            elif self.menu_selection == 2:  # Exit
+                self.running = False
+        elif self.current_menu == "plugins":
+            if self.menu_selection < len(self.plugins):
+                # Toggle plugin active state
+                plugin = self.plugins[self.menu_selection]
+                if plugin.active:
+                    plugin.deactivate()
+                else:
+                    plugin.activate()
+                self.save_plugin_config()
+                # Update menu text
+                self.menus["plugins"][self.menu_selection] = plugin.name + (" [Active]" if plugin.active else " [Inactive]")
+            else:  # Back option
+                self.current_menu = "main"
+                self.menu_selection = 0
+        
+        self.needs_redraw = True
+
     def update(self):
         # Calculate time since last update
         current_time = time.time()
         dt = current_time - self.last_update
         self.last_update = current_time
         
+        # Skip updates if in menu
+        if self.in_menu:
+            return
+        
         # Check if message timeout has expired
         if self.message_timeout > 0 and current_time > self.message_timeout:
             self.message = ""
             self.message_timeout = 0
             self.needs_redraw = True
+        
+        # Update plugins
+        for plugin in self.plugins:
+            plugin.update(dt)
         
         # Simulate key release after a short time
         # This allows for diagonal movement by pressing keys in sequence
@@ -224,6 +490,10 @@ class TextAdventure:
             return
             
         self.screen.clear()
+        
+        if self.in_menu:
+            self.render_menu()
+            return
         
         # Calculate player position at center of screen
         player_screen_y = self.max_y // 2
@@ -273,6 +543,11 @@ class TextAdventure:
         if 0 <= player_screen_y < drawable_height and 0 <= player_screen_x < self.max_x - 1:
             self.screen.addch(player_screen_y, player_screen_x, self.player_char, self.player_color)
         
+        # Render active plugins
+        for plugin in self.plugins:
+            if plugin.active:
+                plugin.render(self.screen)
+        
         # Draw panel at the bottom
         panel_y = self.max_y - 2
         direction = getattr(self, 'direction', '')
@@ -281,7 +556,7 @@ class TextAdventure:
         if self.message:
             panel_text = self.message
         else:
-            panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space"
+            panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space | ESC: Menu"
         
         # Fill panel background
         for x in range(self.max_x - 1):
@@ -290,11 +565,47 @@ class TextAdventure:
         # Draw panel text
         self.screen.addstr(panel_y, 1, panel_text[:self.max_x - 3], self.panel_color)
         
+        # Draw menu bar at top
+        self.screen.addstr(0, 0, " " * (self.max_x - 1), self.menu_color)
+        menu_text = "TextWarp Adventure | Press ESC for Menu"
+        self.screen.addstr(0, (self.max_x - len(menu_text)) // 2, menu_text, self.menu_color)
+        
         # Update screen
         self.screen.refresh()
         
         # Reset redraw flag
         self.needs_redraw = False
+
+    def render_menu(self):
+        # Draw menu background
+        menu_width = 40
+        menu_height = len(self.menus[self.current_menu]) + 4
+        menu_x = (self.max_x - menu_width) // 2
+        menu_y = (self.max_y - menu_height) // 2
+        
+        # Draw border
+        for y in range(menu_y, menu_y + menu_height):
+            for x in range(menu_x, menu_x + menu_width):
+                if (y == menu_y or y == menu_y + menu_height - 1 or 
+                    x == menu_x or x == menu_x + menu_width - 1):
+                    self.screen.addch(y, x, '#', self.menu_color)
+                else:
+                    self.screen.addch(y, x, ' ', self.menu_color)
+        
+        # Draw title
+        title = "Menu" if self.current_menu == "main" else "Plugin Management"
+        self.screen.addstr(menu_y + 1, menu_x + (menu_width - len(title)) // 2, title, self.menu_color)
+        
+        # Draw menu items
+        for i, item in enumerate(self.menus[self.current_menu]):
+            if i == self.menu_selection:
+                # Highlight selected item
+                self.screen.addstr(menu_y + i + 3, menu_x + 2, "> " + item + " <", self.menu_color | curses.A_BOLD)
+            else:
+                self.screen.addstr(menu_y + i + 3, menu_x + 4, item, self.menu_color)
+        
+        # Update screen
+        self.screen.refresh()
 
     def cleanup(self):
         # Clean up curses
