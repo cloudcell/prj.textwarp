@@ -189,6 +189,14 @@ class Polygraph3DPlugin(Plugin):
         self.original_get_char = None
         self.height_map = {}  # Cache for height values
         
+        # Height settings
+        self.min_height = -10
+        self.max_height = 10
+        self.height_scale = 4.0  # Divisor for height scaling (smaller = more dramatic)
+        
+        # Load settings if they exist
+        self.load_settings()
+    
     @property
     def name(self):
         """Return the name of the plugin."""
@@ -216,19 +224,19 @@ class Polygraph3DPlugin(Plugin):
     
     def get_height(self, x, y):
         """Get the height value for coordinates (x, y)."""
-        # Check cache first
+        # Check if the height is already cached
         key = f"{x},{y}"
         if key in self.height_map:
             return self.height_map[key]
-            
-        # Calculate height if not in cache
+        
+        # Generate height using the classifier
         height = self.classifier.get_height(x, y)
         
-        # Cache the result
-        self.height_map[key] = height
+        # Clamp to min/max height settings
+        height = max(self.min_height, min(self.max_height, height))
         
-        # Print for debugging
-        print(f"Height for ({x}, {y}): {height}")
+        # Cache the height
+        self.height_map[key] = height
         
         return height
     
@@ -282,7 +290,7 @@ class Polygraph3DPlugin(Plugin):
                     if char == ' ':
                         continue
                         
-                    # Get the height from our plugin - scale it for better visibility
+                    # Get the height from our plugin
                     height = self.get_height(world_x, world_y)
                     
                     # Determine color based on character
@@ -291,9 +299,10 @@ class Polygraph3DPlugin(Plugin):
                     # Create a 3D character object
                     char_obj = Character3D(char, world_x - gui_plugin.game.world_x, world_y - gui_plugin.game.world_y, color)
                     
-                    # Override the height with our calculated height - amplify for better visibility
-                    # Convert from [-10, 10] to [0.1, 5.1] for more dramatic height differences
-                    char_obj.height = 0.1 + (height + 10) / 4.0
+                    # Override the height with our calculated height - using configurable settings
+                    # Convert from [min_height, max_height] to [0.1, 5.1] for more dramatic height differences
+                    normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
+                    char_obj.height = 0.1 + normalized_height * (5.0 / self.height_scale)
                     
                     # Add to the character map
                     with gui_plugin.lock:
@@ -302,6 +311,137 @@ class Polygraph3DPlugin(Plugin):
         
         # Replace the method
         gui_plugin.update_character_map = new_update_character_map
+    
+    def load_settings(self):
+        """Load settings from a file."""
+        try:
+            import json
+            with open("polygraph_3d_settings.json", "r") as f:
+                settings = json.load(f)
+                self.min_height = settings.get("min_height", -10)
+                self.max_height = settings.get("max_height", 10)
+                self.height_scale = settings.get("height_scale", 4.0)
+        except:
+            # Use default settings if file doesn't exist or is invalid
+            pass
+    
+    def save_settings(self):
+        """Save settings to a file."""
+        try:
+            import json
+            with open("polygraph_3d_settings.json", "w") as f:
+                settings = {
+                    "min_height": self.min_height,
+                    "max_height": self.max_height,
+                    "height_scale": self.height_scale
+                }
+                json.dump(settings, f)
+        except:
+            # Ignore errors
+            pass
+    
+    def show_settings_menu(self):
+        """Show the settings menu for the 3D Polygraph plugin."""
+        # We'll use the game's screen which already has curses initialized
+        screen = self.game.screen
+        
+        # Variables for menu navigation
+        current_selection = 0
+        in_settings_menu = True
+        settings = [
+            {"name": "Minimum Height", "value": self.min_height, "min": -50, "max": 0, "step": 1},
+            {"name": "Maximum Height", "value": self.max_height, "min": 1, "max": 50, "step": 1},
+            {"name": "Height Scale", "value": self.height_scale, "min": 1.0, "max": 20.0, "step": 0.5}
+        ]
+        
+        # Get curses module from the game to avoid importing it directly
+        curses = self.game.curses
+        
+        # Main loop for settings menu
+        while in_settings_menu:
+            try:
+                # Clear screen
+                screen.clear()
+                
+                # Draw header
+                screen.addstr(0, 0, "3D Polygraph Settings", self.game.menu_color | curses.A_BOLD)
+                screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+                
+                # Draw instructions
+                screen.addstr(2, 0, "Use ↑/↓ to select a setting, ←/→ to change values", self.game.menu_color)
+                screen.addstr(3, 0, "Press ENTER to apply changes, ESC to cancel", self.game.menu_color)
+                screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+                
+                # Draw settings
+                for i, setting in enumerate(settings):
+                    # Highlight the selected item
+                    if i == current_selection:
+                        attr = self.game.selected_menu_color | curses.A_BOLD
+                    else:
+                        attr = self.game.menu_color
+                    
+                    # Draw the item
+                    screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
+                    
+                    # Draw range information
+                    range_info = f"(Range: {setting['min']} to {setting['max']})"
+                    screen.addstr(i + 6, 40, range_info, self.game.menu_color)
+                
+                # Draw footer
+                screen.addstr(self.game.max_y - 2, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+                screen.addstr(self.game.max_y - 1, 0, "R: Reset to defaults", self.game.menu_color)
+                
+                # Refresh screen
+                screen.refresh()
+                
+                # Get input
+                key = screen.getch()
+                
+                # Handle input
+                if key == curses.KEY_UP:
+                    current_selection = (current_selection - 1) % len(settings)
+                elif key == curses.KEY_DOWN:
+                    current_selection = (current_selection + 1) % len(settings)
+                elif key == curses.KEY_LEFT:
+                    # Decrease value
+                    setting = settings[current_selection]
+                    setting['value'] = max(setting['min'], setting['value'] - setting['step'])
+                elif key == curses.KEY_RIGHT:
+                    # Increase value
+                    setting = settings[current_selection]
+                    setting['value'] = min(setting['max'], setting['value'] + setting['step'])
+                elif key == ord('r') or key == ord('R'):
+                    # Reset to defaults
+                    settings[0]['value'] = -10  # min_height
+                    settings[1]['value'] = 10   # max_height
+                    settings[2]['value'] = 4.0  # height_scale
+                elif key == 10:  # Enter key
+                    # Apply changes
+                    self.min_height = settings[0]['value']
+                    self.max_height = settings[1]['value']
+                    self.height_scale = settings[2]['value']
+                    
+                    # Save settings
+                    self.save_settings()
+                    
+                    # Clear height cache to apply new settings
+                    self.height_map = {}
+                    
+                    # Exit menu
+                    in_settings_menu = False
+                elif key == 27:  # Escape key
+                    # Exit without saving
+                    in_settings_menu = False
+            except Exception as e:
+                # Handle any exceptions to prevent the menu from crashing
+                screen.clear()
+                screen.addstr(0, 0, f"Error: {str(e)}", curses.A_BOLD)
+                screen.addstr(1, 0, "Press any key to continue...", curses.A_BOLD)
+                screen.refresh()
+                screen.getch()
+        
+        # Force redraw
+        self.game.needs_redraw = True
     
     def activate(self):
         """
@@ -372,9 +512,10 @@ class Polygraph3DPlugin(Plugin):
                             # Create a 3D character object
                             char_obj = Character3D(char, world_x - self_gui.game.world_x, world_y - self_gui.game.world_y, color)
                             
-                            # Override the height with our calculated height - amplify for better visibility
-                            # Convert from [-10, 10] to [0.1, 5.1] for more dramatic height differences
-                            char_obj.height = 0.1 + (height + 10) / 4.0
+                            # Override the height with our calculated height - using configurable settings
+                            # Convert from [min_height, max_height] to [0.1, 5.1] for more dramatic height differences
+                            normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
+                            char_obj.height = 0.1 + normalized_height * (5.0 / self.height_scale)
                             
                             # Add to the character map
                             with self_gui.lock:

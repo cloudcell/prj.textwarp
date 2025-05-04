@@ -16,10 +16,13 @@ from plugins.polygraph_3d import Polygraph3DPlugin
 import copy
 
 class TextAdventure:
-    def __init__(self):
+    """A text-based adventure game."""
+
+    def __init__(self, screen):
         """Initialize the game."""
         # Initialize variables
-        self.screen = None
+        self.screen = screen
+        self.curses = __import__('curses')  # Store curses module reference for plugins
         self.running = True
         self.world_x = 0
         self.world_y = 0
@@ -108,7 +111,7 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Color Settings", "Network", "Exit"],
+            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "Network", "Exit"],
             "plugins": []  # Will be populated with plugin names
         }
         
@@ -160,7 +163,6 @@ class TextAdventure:
 
     def setup(self):
         """Setup curses and colors."""
-        self.screen = curses.initscr()
         curses.start_color()
         curses.use_default_colors()
         curses.noecho()
@@ -379,11 +381,36 @@ class TextAdventure:
                 # Return to menu mode
                 self.in_menu = True
                 self.needs_redraw = True
-            elif self.menu_selection == 3:  # Network
+            elif self.menu_selection == 3:  # 3D Polygraph Settings
+                # Check if the 3D Polygraph plugin is active
+                polygraph_plugin = None
+                for plugin in self.plugins:
+                    if plugin.__class__.__name__ == "Polygraph3DPlugin" and plugin.active:
+                        polygraph_plugin = plugin
+                        break
+                
+                if polygraph_plugin:
+                    # Temporarily exit menu mode
+                    self.in_menu = False
+                    self.needs_redraw = True
+                    
+                    # Show 3D Polygraph settings menu
+                    polygraph_plugin.show_settings_menu()
+                    
+                    # Return to menu mode
+                    self.in_menu = True
+                    self.needs_redraw = True
+                else:
+                    # Show message that plugin is not active
+                    self.message = "3D Polygraph plugin is not active. Please activate it first."
+                    self.message_timeout = 3.0
+                    self.in_menu = False
+                    self.needs_redraw = True
+            elif self.menu_selection == 4:  # Network
                 # Find the network plugin
                 network_plugin = None
                 for plugin in self.plugins:
-                    if isinstance(plugin, NetworkPlugin):
+                    if plugin.__class__.__name__ == "NetworkPlugin":
                         network_plugin = plugin
                         break
                 
@@ -398,7 +425,7 @@ class TextAdventure:
                     # Return to menu mode
                     self.in_menu = True
                     self.needs_redraw = True
-            elif self.menu_selection == 4:  # Exit
+            elif self.menu_selection == 5:  # Exit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
@@ -1128,7 +1155,8 @@ class TextAdventure:
             pass  # Ignore errors if the file doesn't exist or is invalid
 
 def main():
-    game = TextAdventure()
+    screen = curses.initscr()
+    game = TextAdventure(screen)
     game.run()
 
 if __name__ == "__main__":
