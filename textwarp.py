@@ -11,6 +11,7 @@ class TextAdventure:
         self.player_color = None
         self.background_color = None
         self.at_symbol_color = None
+        self.zero_color = None
         self.panel_color = None
         self.max_y = 0
         self.max_x = 0
@@ -79,10 +80,12 @@ class TextAdventure:
         curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)  # Background color
         curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)  # @ symbol color
         curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLUE)  # Panel color
+        curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK) # 0 character color
         self.player_color = curses.color_pair(1)
         self.background_color = curses.color_pair(2)
         self.at_symbol_color = curses.color_pair(3)
         self.panel_color = curses.color_pair(4)
+        self.zero_color = curses.color_pair(5)
 
     def handle_input(self):
         # Get input
@@ -226,6 +229,8 @@ class TextAdventure:
                 # Choose color based on character
                 if char == '@':
                     color = self.at_symbol_color
+                elif char == '0':
+                    color = self.zero_color
                 else:
                     color = self.background_color
                 
