@@ -37,7 +37,47 @@ class TextAdventure:
             ord('w'): False,
             ord('s'): False,
             ord('a'): False,
-            ord('d'): False
+            ord('d'): False,
+            # Numeric keypad
+            ord('7'): False,  # NW
+            ord('8'): False,  # N
+            ord('9'): False,  # NE
+            ord('4'): False,  # W
+            ord('6'): False,  # E
+            ord('1'): False,  # SW
+            ord('2'): False,  # S
+            ord('3'): False,  # SE
+            # Numpad with numlock
+            curses.KEY_A1: False,  # NW (7)
+            curses.KEY_A2: False,  # N (8)
+            curses.KEY_A3: False,  # NE (9)
+            curses.KEY_B1: False,  # W (4)
+            curses.KEY_B3: False,  # E (6)
+            curses.KEY_C1: False,  # SW (1)
+            curses.KEY_C2: False,  # S (2)
+            curses.KEY_C3: False   # SE (3)
+        }
+        # Direction mapping for numeric keypad
+        self.numpad_directions = {
+            ord('7'): (-1, -1),  # NW
+            ord('8'): (0, -1),   # N
+            ord('9'): (1, -1),   # NE
+            ord('4'): (-1, 0),   # W
+            ord('5'): (0, 0),    # Center (no movement)
+            ord('6'): (1, 0),    # E
+            ord('1'): (-1, 1),   # SW
+            ord('2'): (0, 1),    # S
+            ord('3'): (1, 1),    # SE
+            # Numpad with numlock
+            curses.KEY_A1: (-1, -1),  # NW (7)
+            curses.KEY_A2: (0, -1),   # N (8)
+            curses.KEY_A3: (1, -1),   # NE (9)
+            curses.KEY_B1: (-1, 0),   # W (4)
+            curses.KEY_B2: (0, 0),    # Center (5)
+            curses.KEY_B3: (1, 0),    # E (6)
+            curses.KEY_C1: (-1, 1),   # SW (1)
+            curses.KEY_C2: (0, 1),    # S (2)
+            curses.KEY_C3: (1, 1)     # SE (3)
         }
 
     def setup(self):
@@ -79,21 +119,43 @@ class TextAdventure:
             if key in self.key_states:
                 self.key_states[key] = True
         
-        # Calculate movement direction based on key states
+        # Reset movement direction
         self.dx = 0
         self.dy = 0
         
-        # Check vertical movement
-        if (self.key_states[curses.KEY_UP] or self.key_states[ord('w')]):
-            self.dy = -1
-        elif (self.key_states[curses.KEY_DOWN] or self.key_states[ord('s')]):
-            self.dy = 1
+        # Check for numpad input first (takes precedence)
+        if key in self.numpad_directions:
+            self.dx, self.dy = self.numpad_directions[key]
+        else:
+            # Check vertical movement
+            if (self.key_states[curses.KEY_UP] or self.key_states[ord('w')] or 
+                self.key_states[ord('8')] or self.key_states[curses.KEY_A2]):
+                self.dy = -1
+            elif (self.key_states[curses.KEY_DOWN] or self.key_states[ord('s')] or 
+                  self.key_states[ord('2')] or self.key_states[curses.KEY_C2]):
+                self.dy = 1
+                
+            # Check horizontal movement
+            if (self.key_states[curses.KEY_LEFT] or self.key_states[ord('a')] or 
+                self.key_states[ord('4')] or self.key_states[curses.KEY_B1]):
+                self.dx = -1
+            elif (self.key_states[curses.KEY_RIGHT] or self.key_states[ord('d')] or 
+                  self.key_states[ord('6')] or self.key_states[curses.KEY_B3]):
+                self.dx = 1
             
-        # Check horizontal movement
-        if (self.key_states[curses.KEY_LEFT] or self.key_states[ord('a')]):
-            self.dx = -1
-        elif (self.key_states[curses.KEY_RIGHT] or self.key_states[ord('d')]):
-            self.dx = 1
+            # Check diagonal movement
+            if self.key_states[ord('7')] or self.key_states[curses.KEY_A1]:  # NW
+                self.dx = -1
+                self.dy = -1
+            elif self.key_states[ord('9')] or self.key_states[curses.KEY_A3]:  # NE
+                self.dx = 1
+                self.dy = -1
+            elif self.key_states[ord('1')] or self.key_states[curses.KEY_C1]:  # SW
+                self.dx = -1
+                self.dy = 1
+            elif self.key_states[ord('3')] or self.key_states[curses.KEY_C3]:  # SE
+                self.dx = 1
+                self.dy = 1
         
         # Handle quit
         if key == ord('q') or key == ord('Q'):
@@ -196,7 +258,7 @@ class TextAdventure:
         # Draw panel at the bottom
         panel_y = self.max_y - 2
         direction = getattr(self, 'direction', '')
-        panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction}"
+        panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Key: {self.last_key}"
         
         # Fill panel background
         for x in range(self.max_x - 1):
