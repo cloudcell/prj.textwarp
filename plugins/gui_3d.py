@@ -668,8 +668,10 @@ class GUI3DPlugin(Plugin):
         glRotatef(self.rotation_y, 0, 1, 0)
         glRotatef(self.rotation_z, 0, 0, 1)
         
-        # Add debug message with snake information (without XYZ prefix)
-        self.add_debug_message(f"{self.render_debug_info()}")
+        # Add debug message with snake information (without any prefix)
+        debug_info = self.render_debug_info()
+        if debug_info:
+            self.add_debug_message(debug_info)
         
         # Draw coordinate axes if enabled
         if self.show_axes:
@@ -839,6 +841,10 @@ class GUI3DPlugin(Plugin):
         
         # Draw each snake
         for snake_idx, snake in enumerate(self.snakes):
+            # Skip empty snakes
+            if not snake:
+                continue
+                
             self.add_debug_message(f"Snake {snake_idx} has {len(snake)} segments")  # Debug output
             
             if len(snake) < 2:
@@ -1160,10 +1166,30 @@ class GUI3DPlugin(Plugin):
     
     def draw_text_fallback(self, text):
         """Fallback for drawing text if GLUT is not available."""
-        # This is a very basic fallback and may not work correctly
+        # This is a very basic fallback that doesn't print to terminal
         # It's recommended to use GLUT for proper text rendering
-        for c in text:
-            print(c, end='', flush=True)
+        
+        # Instead of printing to terminal, we'll draw simple rectangles
+        # to represent text in the 3D scene
+        glDisable(GL_LIGHTING)
+        glColor3f(1.0, 1.0, 1.0)  # White color for text
+        
+        # Draw a small rectangle for each character
+        for i, c in enumerate(text):
+            glPushMatrix()
+            glTranslatef(i * 0.1, 0, 0)  # Offset each character
+            
+            # Draw a small rectangle
+            glBegin(GL_QUADS)
+            glVertex3f(0, 0, 0)
+            glVertex3f(0.08, 0, 0)
+            glVertex3f(0.08, 0.1, 0)
+            glVertex3f(0, 0.1, 0)
+            glEnd()
+            
+            glPopMatrix()
+        
+        glEnable(GL_LIGHTING)
     
     def draw_cube(self, size):
         """Draw a simple cube."""
@@ -1423,6 +1449,9 @@ class GUI3DPlugin(Plugin):
 
     def add_debug_message(self, message):
         """Add a debug message to the list of messages to display."""
+        # Filter out any XYZ prefixes that might be in the message
+        message = message.replace("XYZ", "")
+        
         self.debug_messages.append(message)
         # Keep only the most recent messages
         if len(self.debug_messages) > self.max_debug_messages:
@@ -1433,22 +1462,29 @@ class GUI3DPlugin(Plugin):
         if not self.debug_messages:
             return
             
-        # Get curses module from the game
-        curses = self.game.curses
-        
-        # Get screen dimensions
-        max_y, max_x = screen.getmaxyx()
-        
-        # Clear the bottom lines
-        for i in range(self.max_debug_messages):
-            screen.move(max_y - 2 - i, 0)
-            screen.clrtoeol()
-        
-        # Display debug messages
-        for i, message in enumerate(reversed(self.debug_messages)):
-            if i >= self.max_debug_messages:
-                break
-            screen.addstr(max_y - 2 - i, 0, message[:max_x-1])
+        try:
+            # Get curses module from the game
+            curses = self.game.curses
+            
+            # Get screen dimensions
+            max_y, max_x = screen.getmaxyx()
+            
+            # Clear the bottom lines
+            for i in range(self.max_debug_messages):
+                screen.move(max_y - 2 - i, 0)
+                screen.clrtoeol()
+            
+            # Display debug messages
+            for i, message in enumerate(reversed(self.debug_messages)):
+                if i >= self.max_debug_messages:
+                    break
+                # Clean the message to ensure no XYZ strings
+                clean_message = message.replace("XYZ", "").strip()
+                if clean_message:  # Only display non-empty messages
+                    screen.addstr(max_y - 2 - i, 0, clean_message[:max_x-1])
+        except:
+            # Silently handle any errors to prevent crashes
+            pass
 
     def init_font_texture(self):
         """Initialize the font texture."""
@@ -1490,7 +1526,7 @@ class GUI3DPlugin(Plugin):
         # Make a copy of the characters dictionary to avoid modification during iteration
         with self.lock:
             characters_copy = dict(self.characters)
-        
+            
         # Extend the rendering distance
         render_range = self.render_distance // 2
         
