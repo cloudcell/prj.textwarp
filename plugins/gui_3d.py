@@ -68,6 +68,7 @@ class GUI3DPlugin(Plugin):
         # Display options
         self.show_letters = True
         self.show_sticks = True
+        self.show_dots_without_sticks = False  # New option to show dots without sticks
         self.show_mesh = True
         self.show_terrain_mesh = False  # New option for terrain mesh
         self.terrain_mesh_style = "filled"  # Options: "filled", "wireframe"
@@ -146,11 +147,18 @@ class GUI3DPlugin(Plugin):
             # Create a list to store this snake's segments
             snake_segments = []
             
+            # Get the number of rattles for this snake
+            num_rattles = getattr(snake, 'rattles', 0)
+            
             # Process each segment of the snake
             for i, (sx, sy) in enumerate(snake.body):
-                # Calculate relative coordinates
+                # Calculate relative coordinates - center around player position
                 rel_x = sx - self.game.world_x
                 rel_y = sy - self.game.world_y
+                
+                # Skip segments that are too far away
+                if abs(rel_x) > self.render_distance or abs(rel_y) > self.render_distance:
+                    continue
                 
                 # Get height for this position (if available)
                 height = 1.0  # Default height if no height plugin
@@ -163,49 +171,35 @@ class GUI3DPlugin(Plugin):
                 # Ensure height is positive for visibility
                 height = max(1.0, abs(height))
                 
-                # Determine color based on segment type
+                # Determine segment type and color
                 if i == 0:
+                    # Head is green
+                    segment_type = 'head'
                     color = (0.0, 1.0, 0.0, 1.0)  # Bright green for head
-                else:
-                    color = (0.0, 0.0, 1.0, 1.0)  # Bright blue for body
-                    
-                # Rattles are red
-                if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles:
+                elif num_rattles > 0 and i >= len(snake.body) - num_rattles:
+                    # Rattles are red
+                    segment_type = 'rattle'
                     color = (1.0, 0.0, 0.0, 1.0)  # Bright red for rattles
+                else:
+                    # Body is blue
+                    segment_type = 'body'
+                    color = (0.0, 0.0, 1.0, 1.0)  # Bright blue for body
                 
                 # Add to the snake segments list with explicit position
                 snake_segments.append({
                     'position': (rel_x, height, rel_y),
                     'color': color,
-                    'type': 'head' if i == 0 else ('rattle' if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles else 'body')
+                    'type': segment_type
                 })
             
             # Add this snake's segments to the snakes list
             if snake_segments:
                 with self.lock:
-                    # Check if this snake is already in the list
-                    snake_exists = False
-                    for existing_snake in self.snakes:
-                        if len(existing_snake) == len(snake_segments):
-                            snake_exists = True
-                            break
-                    
-                    # Only add if not already present
-                    if not snake_exists:
-                        self.snakes.append(snake_segments)
-                        self.add_debug_message(f"Directly added snake with {len(snake_segments)} segments")
-    
-    def render(self, screen):
-        """Render the plugin on the curses screen.
-        
-        This method is required by the Plugin base class, but we don't need to
-        render anything on the curses screen since we're using a separate window.
-        """
-        # We don't need to render anything on the curses screen
-        # Our rendering happens in the separate PyGame window
-        
-        # Render debug messages
-        self.render_debug_messages(screen)
+                    # Replace any existing snake with the same index
+                    while len(self.snakes) <= snake_idx:
+                        self.snakes.append([])
+                    self.snakes[snake_idx] = snake_segments
+                    self.add_debug_message(f"Updated snake {snake_idx} with {len(snake_segments)} segments")
     
     def update_character_map(self):
         """Update the 3D character map from the game world."""
@@ -251,17 +245,20 @@ class GUI3DPlugin(Plugin):
                     # Create a list to store this snake's segments
                     snake_segments = []
                     
+                    # Get the number of rattles for this snake
+                    num_rattles = getattr(snake, 'rattles', 0)
+                    
                     # Process each segment of the snake
                     for i, (sx, sy) in enumerate(snake.body):
-                        # Skip segments outside the visible area
-                        if (abs(sx - world_x) > self.render_distance or 
-                            abs(sy - world_y) > self.render_distance):
-                            continue
-                            
-                        # Calculate relative coordinates
+                        # Calculate relative coordinates - center around player position
                         rel_x = sx - world_x
                         rel_y = sy - world_y
                         
+                        # Skip segments outside the visible area
+                        if (abs(rel_x) > self.render_distance or 
+                            abs(rel_y) > self.render_distance):
+                            continue
+                            
                         # Get height for this position (if available)
                         segment_height = 1.0  # Default height if no height plugin
                         if height_plugin:
@@ -273,21 +270,25 @@ class GUI3DPlugin(Plugin):
                         # Ensure height is positive for visibility
                         segment_height = max(1.0, abs(segment_height))
                         
-                        # Determine color based on segment type
+                        # Determine segment type and color
                         if i == 0:
+                            # Head is green
+                            segment_type = 'head'
                             color = (0.0, 1.0, 0.0, 1.0)  # Bright green for head
-                        else:
-                            color = (0.0, 0.0, 1.0, 1.0)  # Bright blue for body
-                            
-                        # Rattles are red
-                        if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles:
+                        elif num_rattles > 0 and i >= len(snake.body) - num_rattles:
+                            # Rattles are red
+                            segment_type = 'rattle'
                             color = (1.0, 0.0, 0.0, 1.0)  # Bright red for rattles
+                        else:
+                            # Body is blue
+                            segment_type = 'body'
+                            color = (0.0, 0.0, 1.0, 1.0)  # Bright blue for body
                         
                         # Add to the snake segments list
                         snake_segments.append({
                             'position': (rel_x, segment_height, rel_y),
                             'color': color,
-                            'type': 'head' if i == 0 else ('rattle' if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles else 'body')
+                            'type': segment_type
                         })
                         
                         # Also add as a character for compatibility
@@ -299,7 +300,10 @@ class GUI3DPlugin(Plugin):
                     # Add this snake's segments to the snakes list
                     if snake_segments:
                         with self.lock:
-                            self.snakes.append(snake_segments)
+                            # Replace any existing snake with the same index
+                            while len(self.snakes) <= snake_idx:
+                                self.snakes.append([])
+                            self.snakes[snake_idx] = snake_segments
                             self.add_debug_message(f"Added snake {snake_idx} with {len(snake_segments)} segments")
             except Exception as e:
                 self.add_debug_message(f"Snake processing error: {e}")
@@ -664,8 +668,8 @@ class GUI3DPlugin(Plugin):
         glRotatef(self.rotation_y, 0, 1, 0)
         glRotatef(self.rotation_z, 0, 0, 1)
         
-        # Add debug message with XYZ coordinates
-        self.add_debug_message(f"XYZ{self.render_debug_info()}")
+        # Add debug message with snake information (without XYZ prefix)
+        self.add_debug_message(f"{self.render_debug_info()}")
         
         # Draw coordinate axes if enabled
         if self.show_axes:
@@ -675,7 +679,7 @@ class GUI3DPlugin(Plugin):
         self.draw_ground_plane()
         
         # Draw vertical lines (sticks) if enabled
-        if self.show_sticks:
+        if self.show_sticks or self.show_dots_without_sticks:
             self.draw_vertical_lines()
         
         # Draw terrain mesh if enabled
@@ -879,9 +883,14 @@ class GUI3DPlugin(Plugin):
                 
                 # Draw a sphere with appropriate size based on segment type
                 if segment_type == 'head':
-                    radius = 0.5  # Larger head
+                    radius = 0.6  # Larger head
                 elif segment_type == 'rattle':
-                    radius = 0.4  # Medium rattles
+                    radius = 0.5  # Medium rattles
+                    # Add a pulsing effect to rattles to make them more noticeable
+                    import math
+                    pulse = 0.2 * math.sin(time.time() * 5.0) + 0.8  # Pulsing between 0.6 and 1.0
+                    glColor4f(color[0] * pulse, color[1] * pulse, color[2] * pulse, 1.0)
+                    glMaterialfv(GL_FRONT, GL_EMISSION, (0.3, 0.0, 0.0, 1.0))  # Add glow to rattles
                 else:
                     radius = 0.3  # Smaller body segments
                     
@@ -1111,7 +1120,6 @@ class GUI3DPlugin(Plugin):
         glColor3f(0.0, 0.0, 1.0)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 0, 10)
-        
         glEnd()
         
         # Draw axis labels
@@ -1198,6 +1206,7 @@ class GUI3DPlugin(Plugin):
                 settings = json.load(f)
                 self.show_letters = settings.get("show_letters", True)
                 self.show_sticks = settings.get("show_sticks", True)
+                self.show_dots_without_sticks = settings.get("show_dots_without_sticks", False)
                 self.show_mesh = settings.get("show_mesh", True)
                 self.show_terrain_mesh = settings.get("show_terrain_mesh", False)
                 self.terrain_mesh_style = settings.get("terrain_mesh_style", "filled")
@@ -1219,6 +1228,7 @@ class GUI3DPlugin(Plugin):
                 settings = {
                     "show_letters": self.show_letters,
                     "show_sticks": self.show_sticks,
+                    "show_dots_without_sticks": self.show_dots_without_sticks,
                     "show_mesh": self.show_mesh,
                     "show_terrain_mesh": self.show_terrain_mesh,
                     "terrain_mesh_style": self.terrain_mesh_style,
@@ -1239,6 +1249,7 @@ class GUI3DPlugin(Plugin):
         # Store original settings in case user cancels
         original_show_letters = self.show_letters
         original_show_sticks = self.show_sticks
+        original_show_dots_without_sticks = self.show_dots_without_sticks
         original_show_mesh = self.show_mesh
         original_show_terrain_mesh = self.show_terrain_mesh
         original_terrain_mesh_style = self.terrain_mesh_style
@@ -1257,6 +1268,7 @@ class GUI3DPlugin(Plugin):
         settings = [
             {"name": "Show Letters", "value": self.show_letters, "type": "bool"},
             {"name": "Show Sticks", "value": self.show_sticks, "type": "bool"},
+            {"name": "Show Dots Without Sticks", "value": self.show_dots_without_sticks, "type": "bool"},
             {"name": "Show Mesh", "value": self.show_mesh, "type": "bool"},
             {"name": "Show Terrain Mesh", "value": self.show_terrain_mesh, "type": "bool"},
             {"name": "Terrain Mesh Style", "value": self.terrain_mesh_style, "type": "str"},
@@ -1371,15 +1383,16 @@ class GUI3DPlugin(Plugin):
                 # Apply changes
                 self.show_letters = settings[0]["value"]
                 self.show_sticks = settings[1]["value"]
-                self.show_mesh = settings[2]["value"]
-                self.show_terrain_mesh = settings[3]["value"]
-                self.terrain_mesh_style = settings[4]["value"]
-                self.terrain_mesh_opacity = settings[5]["value"]
-                self.terrain_color_scheme = settings[6]["value"]
-                self.stick_dot_size = settings[7]["value"]
-                self.show_snake_connections = settings[8]["value"]
-                self.render_distance = settings[9]["value"]
-                self.show_axes = settings[10]["value"]
+                self.show_dots_without_sticks = settings[2]["value"]
+                self.show_mesh = settings[3]["value"]
+                self.show_terrain_mesh = settings[4]["value"]
+                self.terrain_mesh_style = settings[5]["value"]
+                self.terrain_mesh_opacity = settings[6]["value"]
+                self.terrain_color_scheme = settings[7]["value"]
+                self.stick_dot_size = settings[8]["value"]
+                self.show_snake_connections = settings[9]["value"]
+                self.render_distance = settings[10]["value"]
+                self.show_axes = settings[11]["value"]
                 
                 # Save settings
                 self.save_settings()
@@ -1390,6 +1403,7 @@ class GUI3DPlugin(Plugin):
                 # Restore original settings
                 self.show_letters = original_show_letters
                 self.show_sticks = original_show_sticks
+                self.show_dots_without_sticks = original_show_dots_without_sticks
                 self.show_mesh = original_show_mesh
                 self.show_terrain_mesh = original_show_terrain_mesh
                 self.terrain_mesh_style = original_terrain_mesh_style
@@ -1477,27 +1491,27 @@ class GUI3DPlugin(Plugin):
         with self.lock:
             characters_copy = dict(self.characters)
         
-        # Draw vertical lines from ground to character height
-        glLineWidth(1.0)
-        
         # Extend the rendering distance
         render_range = self.render_distance // 2
         
-        # Draw all vertical lines first
-        glBegin(GL_LINES)
-        for char_key, char_obj in characters_copy.items():
-            # Skip if the character is too far away
-            if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
-                continue
+        # Draw all vertical lines first (if enabled)
+        if self.show_sticks:
+            # Draw vertical lines from ground to character height
+            glLineWidth(1.0)
+            glBegin(GL_LINES)
+            for char_key, char_obj in characters_copy.items():
+                # Skip if the character is too far away
+                if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                    continue
+                    
+                # Set color based on height and color scheme
+                color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+                glColor3f(*color)
                 
-            # Set color based on height and color scheme
-            color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
-            glColor3f(*color)
-            
-            # Draw line from ground to character height
-            glVertex3f(char_obj.x, 0, char_obj.y)
-            glVertex3f(char_obj.x, char_obj.height, char_obj.y)
-        glEnd()
+                # Draw line from ground to character height
+                glVertex3f(char_obj.x, 0, char_obj.y)
+                glVertex3f(char_obj.x, char_obj.height, char_obj.y)
+            glEnd()
         
         # Now draw dots at the end of each stick if enabled
         if self.stick_dot_size > 0:
@@ -1521,3 +1535,15 @@ class GUI3DPlugin(Plugin):
             
             # Disable point sprites
             glDisable(GL_POINT_SMOOTH)
+
+    def render(self, screen):
+        """Render the plugin on the curses screen.
+        
+        This method is required by the Plugin base class, but we don't need to
+        render anything on the curses screen since we're using a separate window.
+        """
+        # We don't need to render anything on the curses screen
+        # Our rendering happens in the separate PyGame window
+        
+        # Render debug messages
+        self.render_debug_messages(screen)

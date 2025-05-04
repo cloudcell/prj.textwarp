@@ -58,6 +58,9 @@ class TextAdventure:
         self.frame_times = []
         self.current_fps = 0
         self.fps_update_timer = 0
+        # Location settings
+        self.start_at_last_location = True  # Whether to start at the last saved location
+        self.load_location_settings()  # Load location settings
         # Key state tracking for diagonal movement
         self.key_states = {
             curses.KEY_UP: False,
@@ -111,8 +114,12 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "3D Visualization Settings", "Network", "Exit"],
-            "plugins": []  # Will be populated with plugin names
+            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "3D Visualization Settings", "Location Settings", "Network", "Exit"],
+            "plugins": [],  # Will be populated with plugin names
+            "location": ["Start at Last Location: " + ("Yes" if self.start_at_last_location else "No"), 
+                         "Save Current Location", 
+                         "Reset to Origin", 
+                         "Back to Main Menu"]
         }
         
         # Plugins
@@ -417,7 +424,10 @@ class TextAdventure:
                     self.message_timeout = 3.0
                     self.in_menu = False
                     self.needs_redraw = True
-            elif self.menu_selection == 5:  # Network
+            elif self.menu_selection == 5:  # Location Settings
+                self.current_menu = "location"
+                self.menu_selection = 0
+            elif self.menu_selection == 6:  # Network
                 # Find the network plugin
                 network_plugin = None
                 for plugin in self.plugins:
@@ -436,7 +446,7 @@ class TextAdventure:
                     # Return to menu mode
                     self.in_menu = True
                     self.needs_redraw = True
-            elif self.menu_selection == 6:  # Exit
+            elif self.menu_selection == 7:  # Exit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
@@ -453,6 +463,29 @@ class TextAdventure:
                 self.save_plugin_config()
             else:
                 # Back to main menu
+                self.current_menu = "main"
+                self.menu_selection = 0
+        elif self.current_menu == "location":
+            if self.menu_selection == 0:  # Start at Last Location
+                self.start_at_last_location = not self.start_at_last_location
+                self.menus["location"][0] = "Start at Last Location: " + ("Yes" if self.start_at_last_location else "No")
+                self.save_location_settings()
+                self.needs_redraw = True
+            elif self.menu_selection == 1:  # Save Current Location
+                self.save_current_location()
+                self.message = "Current location saved"
+                self.message_timeout = 2.0
+                self.in_menu = False
+                self.needs_redraw = True
+            elif self.menu_selection == 2:  # Reset to Origin
+                self.world_x = 0
+                self.world_y = 0
+                self.save_current_location()
+                self.message = "Reset to origin"
+                self.message_timeout = 2.0
+                self.in_menu = False
+                self.needs_redraw = True
+            elif self.menu_selection == 3:  # Back to Main Menu
                 self.current_menu = "main"
                 self.menu_selection = 0
 
@@ -893,6 +926,16 @@ class TextAdventure:
             # Set up signal handler for window resize
             signal.signal(signal.SIGWINCH, self.handle_resize_signal)
             
+            # Load last saved location
+            if self.start_at_last_location:
+                try:
+                    with open('last_location.json', 'r') as f:
+                        last_location = json.load(f)
+                        self.world_x = last_location['x']
+                        self.world_y = last_location['y']
+                except:
+                    pass  # Ignore errors if the file doesn't exist or is invalid
+            
             while self.running:
                 # Check for window resize
                 if self.check_resize:
@@ -916,6 +959,13 @@ class TextAdventure:
         finally:
             self.cleanup()
             
+            # Save last location
+            try:
+                with open('last_location.json', 'w') as f:
+                    json.dump({'x': self.world_x, 'y': self.world_y}, f)
+            except:
+                pass  # Ignore errors if the file can't be written
+
     def handle_resize_signal(self, signum, frame):
         """Signal handler for SIGWINCH (window resize)."""
         self.check_resize = True
@@ -1164,6 +1214,38 @@ class TextAdventure:
             self.coordinate_notches_color = curses.color_pair(self.color_settings["Coordinate Notches"]["color_id"]) | self.color_settings["Coordinate Notches"]["attr"]
         except:
             pass  # Ignore errors if the file doesn't exist or is invalid
+
+    def load_location_settings(self):
+        """Load location settings from a file."""
+        try:
+            with open("location_settings.json", "r") as f:
+                location_data = json.load(f)
+            
+            # Update the location settings
+            self.start_at_last_location = location_data.get("start_at_last_location", True)
+        except:
+            pass  # Ignore errors if the file doesn't exist or is invalid
+
+    def save_location_settings(self):
+        """Save location settings to a file."""
+        try:
+            with open("location_settings.json", "w") as f:
+                json.dump({
+                    "start_at_last_location": self.start_at_last_location
+                }, f)
+        except:
+            pass  # Ignore errors if the file can't be written
+
+    def save_current_location(self):
+        """Save the current location to a file."""
+        try:
+            with open("last_location.json", "w") as f:
+                json.dump({
+                    "x": self.world_x,
+                    "y": self.world_y
+                }, f)
+        except:
+            pass  # Ignore errors if the file can't be written
 
 def main():
     """Main function to run the game."""
