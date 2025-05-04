@@ -69,6 +69,7 @@ class GUI3DPlugin(Plugin):
         self.terrain_mesh_style = "filled"  # Options: "filled", "wireframe"
         self.terrain_mesh_opacity = 0.7  # 0.0 to 1.0
         self.terrain_color_scheme = "height"  # Options: "height", "viridis", "plasma", "inferno", "magma", "cividis"
+        self.stick_dot_size = 8.0  # Size of dots at the end of sticks
         
         # Load settings if they exist
         self.load_settings()
@@ -443,15 +444,24 @@ class GUI3DPlugin(Plugin):
                 glRotatef(self.rotation_y, 0, 1, 0)
                 glRotatef(self.rotation_z, 0, 0, 1)
                 
-                # Draw the ground plane
-                self.draw_ground_plane()
+                # Draw coordinate axes
+                self.draw_axes()
+                
+                # Draw ground plane
+                if self.show_mesh:
+                    self.draw_ground_plane()
                 
                 # Draw terrain mesh if enabled
                 if self.show_terrain_mesh:
                     self.draw_terrain_mesh()
                 
-                # Draw all characters
-                self.draw_characters()
+                # Draw vertical lines (sticks) from ground to character height
+                if self.show_sticks:
+                    self.draw_vertical_lines()
+                
+                # Draw characters
+                if self.show_letters:
+                    self.draw_characters()
                 
                 # Update the display
                 pygame.display.flip()
@@ -497,59 +507,68 @@ class GUI3DPlugin(Plugin):
             self.game.message = f"Font texture error: {e}"
             self.game.message_timeout = 5.0
             
-    def draw_ground_plane(self):
-        """Draw the ground plane."""
-        # Draw a grid on the ground plane
+    def draw_vertical_lines(self):
+        """Draw vertical lines from ground to character height."""
+        # Disable texturing
         glDisable(GL_TEXTURE_2D)
+        
+        # Make a copy of the characters dictionary to avoid modification during iteration
+        with self.lock:
+            characters_copy = dict(self.characters)
+        
+        # Draw vertical lines from ground to character height
         glBegin(GL_LINES)
-        
-        # Set grid color (dark gray)
-        glColor3f(0.2, 0.2, 0.2)
-        
-        # Draw grid lines
-        grid_size = 50
-        for i in range(-grid_size, grid_size + 1, 1):
-            # X axis lines
-            glVertex3f(i, 0, -grid_size)
-            glVertex3f(i, 0, grid_size)
+        for char_key, char_obj in characters_copy.items():
+            # Get color based on height and selected color scheme
+            rgb = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
             
-            # Z axis lines
-            glVertex3f(-grid_size, 0, i)
-            glVertex3f(grid_size, 0, i)
+            # Set color for the line
+            glColor3f(*rgb)
+            
+            # Draw line from ground to character height
+            glVertex3f(char_obj.x, 0, char_obj.y)  # Ground point
+            glVertex3f(char_obj.x, char_obj.height, char_obj.y)  # Character height point
         
         glEnd()
         
-        # Draw coordinate axes for better orientation
-        glBegin(GL_LINES)
-        # X-axis (red)
-        glColor3f(1.0, 0.0, 0.0)
-        glVertex3f(0, 0, 0)
-        glVertex3f(5, 0, 0)
+        # Draw 3D dots at the end of each stick
+        for char_key, char_obj in characters_copy.items():
+            # Get color based on height and selected color scheme
+            rgb = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+            
+            # Calculate dot size (half the width/height of the square)
+            dot_size = self.stick_dot_size / 20.0  # Scale down to appropriate size
+            
+            # Save current matrix
+            glPushMatrix()
+            
+            # Position at the top of the stick
+            glTranslatef(char_obj.x, char_obj.height, char_obj.y)
+            
+            # Always face the camera (billboarding)
+            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+            
+            # Extract the rotation from the modelview matrix
+            camera_right = [modelview[0][0], modelview[1][0], modelview[2][0]]
+            camera_up = [modelview[0][1], modelview[1][1], modelview[2][1]]
+            
+            # Set color for the dot
+            glColor3f(*rgb)
+            
+            # Draw a small quad at the top of the stick
+            glBegin(GL_QUADS)
+            glVertex3f(-dot_size, -dot_size, 0)
+            glVertex3f(dot_size, -dot_size, 0)
+            glVertex3f(dot_size, dot_size, 0)
+            glVertex3f(-dot_size, dot_size, 0)
+            glEnd()
+            
+            # Restore matrix
+            glPopMatrix()
         
-        # Y-axis (green)
-        glColor3f(0.0, 1.0, 0.0)
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 5, 0)
-        
-        # Z-axis (blue)
-        glColor3f(0.0, 0.0, 1.0)
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 5)
-        glEnd()
-        
-        # Draw a special marker at the center (0,0) to indicate player position
-        glBegin(GL_LINES)
-        glColor3f(1.0, 1.0, 0.0)  # Yellow
-        
-        # X marker
-        marker_size = 0.5
-        glVertex3f(-marker_size, 0, -marker_size)
-        glVertex3f(marker_size, 0, marker_size)
-        glVertex3f(-marker_size, 0, marker_size)
-        glVertex3f(marker_size, 0, -marker_size)
-        
-        glEnd()
-        
+        # Re-enable texturing
+        glEnable(GL_TEXTURE_2D)
+    
     def draw_characters(self):
         """Draw all characters in the 3D world."""
         # Make a copy of the characters dictionary to avoid modification during iteration
@@ -575,68 +594,43 @@ class GUI3DPlugin(Plugin):
             # Y is up in OpenGL, so we translate by height/2 to center it vertically
             glTranslatef(char_obj.x, char_obj.height / 2, char_obj.y)
             
-            # Draw a thin vertical line from ground to character base for better height visualization
-            if self.show_sticks and char_obj.height > 0.2:  # Only for characters with significant height
-                glDisable(GL_TEXTURE_2D)
-                glBegin(GL_LINES)
-                # Use a gradient color based on height for the vertical line
-                # Lower heights: blue to green, Higher heights: green to red
-                if char_obj.height < 2.5:
-                    # Blue to green gradient (low to medium height)
-                    r = char_obj.height / 2.5 * 0.5
-                    g = 0.5 + char_obj.height / 2.5 * 0.5
-                    b = 1.0 - char_obj.height / 2.5
-                else:
-                    # Green to red gradient (medium to high height)
-                    r = 0.5 + (char_obj.height - 2.5) / 2.5 * 0.5
-                    g = 1.0 - (char_obj.height - 2.5) / 2.5 * 0.5
-                    b = 0
-                
-                glColor4f(r, g, b, 0.7)  # Semi-transparent height-based color
-                glVertex3f(0, -char_obj.height/2, 0)  # From ground
-                glVertex3f(0, 0, 0)  # To character base
-                glEnd()
-                glEnable(GL_TEXTURE_2D)
+            # Scale the character based on height for better visibility
+            # Taller characters appear larger overall
+            scale_factor = 0.8 + char_obj.height * 0.3
+            glScalef(scale_factor, 1.0, scale_factor)
             
-            # Only draw the letters if enabled
-            if self.show_letters:
-                # Scale the character based on height for better visibility
-                # Taller characters appear larger overall
-                scale_factor = 0.8 + char_obj.height * 0.3
-                glScalef(scale_factor, 1.0, scale_factor)
+            # Always face the camera (billboarding)
+            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+            
+            # Extract the rotation from the modelview matrix
+            camera_right = [modelview[0][0], modelview[1][0], modelview[2][0]]
+            camera_up = [modelview[0][1], modelview[1][1], modelview[2][1]]
+            
+            # Draw the character as a textured quad
+            if char_obj.char in self.char_textures:
+                # Bind the character texture
+                texture_info = self.char_textures[char_obj.char]
+                glBindTexture(GL_TEXTURE_2D, texture_info['id'])
                 
-                # Always face the camera (billboarding)
-                modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+                # Set character color
+                glColor4f(*char_obj.color)
                 
-                # Extract the rotation from the modelview matrix
-                camera_right = [modelview[0][0], modelview[1][0], modelview[2][0]]
-                camera_up = [modelview[0][1], modelview[1][1], modelview[2][1]]
+                # Calculate quad size based on texture aspect ratio
+                aspect = texture_info['width'] / texture_info['height']
+                quad_height = char_obj.height
+                quad_width = quad_height * aspect
                 
-                # Draw the character as a textured quad
-                if char_obj.char in self.char_textures:
-                    # Bind the character texture
-                    texture_info = self.char_textures[char_obj.char]
-                    glBindTexture(GL_TEXTURE_2D, texture_info['id'])
-                    
-                    # Set character color
-                    glColor4f(*char_obj.color)
-                    
-                    # Calculate quad size based on texture aspect ratio
-                    aspect = texture_info['width'] / texture_info['height']
-                    quad_height = char_obj.height
-                    quad_width = quad_height * aspect
-                    
-                    # Draw textured quad
-                    glBegin(GL_QUADS)
-                    glTexCoord2f(0, 0); glVertex3f(-quad_width/2, -quad_height/2, 0)
-                    glTexCoord2f(1, 0); glVertex3f(quad_width/2, -quad_height/2, 0)
-                    glTexCoord2f(1, 1); glVertex3f(quad_width/2, quad_height/2, 0)
-                    glTexCoord2f(0, 1); glVertex3f(-quad_width/2, quad_height/2, 0)
-                    glEnd()
-                else:
-                    # Fallback: draw a colored cube for characters without textures
-                    glColor4f(*char_obj.color)
-                    self.draw_cube(char_obj.height / 2)  # Scale cube by height
+                # Draw textured quad
+                glBegin(GL_QUADS)
+                glTexCoord2f(0, 0); glVertex3f(-quad_width/2, -quad_height/2, 0)
+                glTexCoord2f(1, 0); glVertex3f(quad_width/2, -quad_height/2, 0)
+                glTexCoord2f(1, 1); glVertex3f(quad_width/2, quad_height/2, 0)
+                glTexCoord2f(0, 1); glVertex3f(-quad_width/2, quad_height/2, 0)
+                glEnd()
+            else:
+                # Fallback: draw a colored cube for characters without textures
+                glColor4f(*char_obj.color)
+                self.draw_cube(char_obj.height / 2)  # Scale cube by height
             
             glPopMatrix()
             
@@ -835,6 +829,83 @@ class GUI3DPlugin(Plugin):
         # Disable blending
         glDisable(GL_BLEND)
     
+    def draw_ground_plane(self):
+        """Draw the ground plane."""
+        # Draw a grid on the ground plane
+        glDisable(GL_TEXTURE_2D)
+        glBegin(GL_LINES)
+        
+        # Set grid color (dark gray)
+        glColor3f(0.2, 0.2, 0.2)
+        
+        # Draw grid lines
+        grid_size = 50
+        for i in range(-grid_size, grid_size + 1, 1):
+            # X axis lines
+            glVertex3f(i, 0, -grid_size)
+            glVertex3f(i, 0, grid_size)
+            
+            # Z axis lines
+            glVertex3f(-grid_size, 0, i)
+            glVertex3f(grid_size, 0, i)
+        
+        glEnd()
+        
+        # Draw coordinate axes for better orientation
+        glBegin(GL_LINES)
+        
+        # X-axis (red)
+        glColor3f(1.0, 0.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(5, 0, 0)
+        
+        # Y-axis (green)
+        glColor3f(0.0, 1.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 5, 0)
+        
+        # Z-axis (blue)
+        glColor3f(0.0, 0.0, 1.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 5)
+        glEnd()
+        
+        # Draw a special marker at the center (0,0) to indicate player position
+        glBegin(GL_LINES)
+        glColor3f(1.0, 1.0, 0.0)  # Yellow
+        
+        # X marker
+        marker_size = 0.5
+        glVertex3f(-marker_size, 0, -marker_size)
+        glVertex3f(marker_size, 0, marker_size)
+        glVertex3f(-marker_size, 0, marker_size)
+        glVertex3f(marker_size, 0, -marker_size)
+        
+        glEnd()
+        
+    def draw_axes(self):
+        """Draw coordinate axes for better orientation."""
+        glDisable(GL_TEXTURE_2D)
+        glBegin(GL_LINES)
+        
+        # X-axis (red)
+        glColor3f(1.0, 0.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(10, 0, 0)
+        
+        # Y-axis (green)
+        glColor3f(0.0, 1.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 10, 0)
+        
+        # Z-axis (blue)
+        glColor3f(0.0, 0.0, 1.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 10)
+        
+        glEnd()
+        glEnable(GL_TEXTURE_2D)
+    
     def draw_cube(self, size):
         """Draw a simple cube."""
         half = size / 2
@@ -881,6 +952,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_mesh_style = settings.get("terrain_mesh_style", "filled")
                 self.terrain_mesh_opacity = settings.get("terrain_mesh_opacity", 0.7)
                 self.terrain_color_scheme = settings.get("terrain_color_scheme", "height")
+                self.stick_dot_size = settings.get("stick_dot_size", 8.0)
         except:
             # Use default settings if file doesn't exist or is invalid
             pass
@@ -897,7 +969,8 @@ class GUI3DPlugin(Plugin):
                     "show_terrain_mesh": self.show_terrain_mesh,
                     "terrain_mesh_style": self.terrain_mesh_style,
                     "terrain_mesh_opacity": self.terrain_mesh_opacity,
-                    "terrain_color_scheme": self.terrain_color_scheme
+                    "terrain_color_scheme": self.terrain_color_scheme,
+                    "stick_dot_size": self.stick_dot_size
                 }
                 json.dump(settings, f)
         except:
@@ -914,6 +987,7 @@ class GUI3DPlugin(Plugin):
         original_terrain_mesh_style = self.terrain_mesh_style
         original_terrain_mesh_opacity = self.terrain_mesh_opacity
         original_terrain_color_scheme = self.terrain_color_scheme
+        original_stick_dot_size = self.stick_dot_size
         
         # Variables for menu navigation
         current_selection = 0
@@ -925,7 +999,8 @@ class GUI3DPlugin(Plugin):
             {"name": "Show Terrain Mesh", "value": self.show_terrain_mesh, "type": "bool"},
             {"name": "Terrain Mesh Style", "value": self.terrain_mesh_style, "type": "str"},
             {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float"},
-            {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"}
+            {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"},
+            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float"}
         ]
         
         # Get curses module from the game
@@ -1008,7 +1083,7 @@ class GUI3DPlugin(Plugin):
                         settings[current_selection]["value"] = "height"
                 elif settings[current_selection]["type"] == "float":
                     # Adjust opacity value
-                    if settings[current_selection]["value"] < 1.0:
+                    if settings[current_selection]["value"] < 10.0:
                         settings[current_selection]["value"] += 0.1
                     else:
                         settings[current_selection]["value"] = 0.0
@@ -1020,7 +1095,7 @@ class GUI3DPlugin(Plugin):
                     elif setting["type"] == "str":
                         setting["value"] = "filled"
                     elif setting["type"] == "float":
-                        setting["value"] = 0.7
+                        setting["value"] = 8.0
             elif key == 10:  # Enter key
                 # Apply changes
                 self.show_letters = settings[0]["value"]
@@ -1030,6 +1105,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_mesh_style = settings[4]["value"]
                 self.terrain_mesh_opacity = settings[5]["value"]
                 self.terrain_color_scheme = settings[6]["value"]
+                self.stick_dot_size = settings[7]["value"]
                 
                 # Save settings
                 self.save_settings()
@@ -1045,6 +1121,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_mesh_style = original_terrain_mesh_style
                 self.terrain_mesh_opacity = original_terrain_mesh_opacity
                 self.terrain_color_scheme = original_terrain_color_scheme
+                self.stick_dot_size = original_stick_dot_size
                 
                 # Exit without saving
                 in_settings_menu = False
