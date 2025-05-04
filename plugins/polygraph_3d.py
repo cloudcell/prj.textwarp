@@ -24,18 +24,18 @@ class Polygraph3DClassifier(GraphClassifier):
             self.terrain_height_classifier
         ]
         
-        # Precompute terrain parameters
+        # Precompute terrain parameters with more dramatic features
         self.terrain_params = {
             'mountains': [(random.randint(-500, 500), random.randint(-500, 500), 
-                          random.randint(50, 200), random.random() * 5 + 5) 
-                         for _ in range(10)],
+                          random.randint(50, 200), random.random() * 8 + 8) 
+                         for _ in range(15)],  # More mountains with higher peaks
             'valleys': [(random.randint(-500, 500), random.randint(-500, 500), 
-                        random.randint(50, 200), random.random() * 3 + 2) 
-                       for _ in range(5)],
+                        random.randint(50, 200), random.random() * 6 + 4) 
+                       for _ in range(8)],  # Deeper valleys
             'plateaus': [(random.randint(-500, 500), random.randint(-500, 500), 
-                         random.randint(100, 300), random.random() * 2 + 1,
-                         random.random() * 3 + 1) 
-                        for _ in range(3)]
+                         random.randint(100, 300), random.random() * 5 + 3,
+                         random.random() * 5 + 2) 
+                        for _ in range(5)]  # More pronounced plateaus
         }
     
     def get_height(self, x, y):
@@ -56,7 +56,7 @@ class Polygraph3DClassifier(GraphClassifier):
     def perlin_height_classifier(self, x, y):
         """Generate height based on Perlin noise."""
         # Scale down coordinates more for height to create smoother terrain
-        x, y = x / 100.0, y / 100.0
+        x, y = x / 80.0, y / 80.0  # Reduced scale factor for more dramatic changes
         
         # Get grid cell coordinates
         x0, y0 = int(math.floor(x)), int(math.floor(y))
@@ -77,20 +77,20 @@ class Polygraph3DClassifier(GraphClassifier):
         
         value = self.interpolate(ix0, ix1, sy)
         
-        # Scale to -10 to 10 range
-        return value * 10
+        # Scale to -10 to 10 range with more dramatic peaks and valleys
+        return value * 15  # Increased multiplier for more dramatic height changes
     
     def sine_wave_height_classifier(self, x, y):
         """Generate height based on sine waves."""
         value = (
-            math.sin(x / 50.0) + 
-            math.sin(y / 40.0) + 
-            math.sin((x + y) / 60.0) + 
-            math.sin(math.sqrt(x*x + y*y) / 30.0)
+            math.sin(x / 40.0) * 1.5 +  # Increased amplitude
+            math.sin(y / 30.0) * 1.5 +  # Increased amplitude
+            math.sin((x + y) / 50.0) * 2.0 +  # Increased amplitude
+            math.sin(math.sqrt(x*x + y*y) / 25.0) * 2.0  # Increased amplitude
         )
         
         # Scale to -10 to 10 range
-        return value * 2.5
+        return value * 3.0  # Increased multiplier
     
     def voronoi_height_classifier(self, x, y):
         """Generate height based on Voronoi diagrams."""
@@ -106,8 +106,8 @@ class Polygraph3DClassifier(GraphClassifier):
         
         # Use the difference between the two closest points
         if len(distances) >= 2:
-            # Create ridges along Voronoi edges
-            value = math.exp(-abs(distances[1] - distances[0]) / 10.0) * 20 - 10
+            # Create sharper ridges along Voronoi edges
+            value = math.exp(-abs(distances[1] - distances[0]) / 5.0) * 30 - 15
         else:
             value = 0
             
@@ -116,8 +116,8 @@ class Polygraph3DClassifier(GraphClassifier):
     def fractal_height_classifier(self, x, y):
         """Generate height based on fractal patterns."""
         # Scale coordinates
-        scaled_x = x / 300.0
-        scaled_y = y / 300.0
+        scaled_x = x / 250.0
+        scaled_y = y / 250.0
         
         # Initialize complex number
         c = complex(scaled_x, scaled_y)
@@ -131,13 +131,13 @@ class Polygraph3DClassifier(GraphClassifier):
             z = z*z + c
             iteration += 1
             
-        # Map iteration count to a height value
+        # Map iteration count to a height value with more dramatic differences
         if iteration < max_iter:
-            # Create mountains at the edges of the fractal
-            value = (iteration / max_iter) * 20 - 10
+            # Create taller mountains at the edges of the fractal
+            value = (iteration / max_iter) * 30 - 15
         else:
-            # Create valleys inside the fractal
-            value = -5
+            # Create deeper valleys inside the fractal
+            value = -8
             
         return value
     
@@ -149,31 +149,31 @@ class Polygraph3DClassifier(GraphClassifier):
         for mx, my, size, height_factor in self.terrain_params['mountains']:
             dist = math.sqrt((x - mx)**2 + (y - my)**2)
             if dist < size * 3:
-                # Bell curve formula
-                mountain_height = height_factor * math.exp(-(dist**2) / (2 * size**2))
+                # Bell curve formula with sharper peaks
+                mountain_height = height_factor * math.exp(-(dist**2) / (1.5 * size**2))
                 height += mountain_height
         
         # Add valleys (inverted bell curves)
         for vx, vy, size, depth_factor in self.terrain_params['valleys']:
             dist = math.sqrt((x - vx)**2 + (y - vy)**2)
             if dist < size * 3:
-                # Inverted bell curve
-                valley_depth = -depth_factor * math.exp(-(dist**2) / (2 * size**2))
+                # Inverted bell curve with deeper valleys
+                valley_depth = -depth_factor * math.exp(-(dist**2) / (1.5 * size**2))
                 height += valley_depth
         
         # Add plateaus (sigmoid function)
         for px, py, size, height_factor, sharpness in self.terrain_params['plateaus']:
             dist = math.sqrt((x - px)**2 + (y - py)**2)
             if dist < size * 2:
-                # Sigmoid function for sharp edges
-                plateau_height = height_factor / (1 + math.exp(sharpness * (dist - size)))
+                # Sigmoid function for sharper edges
+                plateau_height = height_factor / (1 + math.exp(sharpness * 1.5 * (dist - size)))
                 height += plateau_height
         
-        # Add some small-scale noise
-        noise = (math.sin(x/10) * math.cos(y/10)) * 0.5
+        # Add some small-scale noise for texture
+        noise = (math.sin(x/8) * math.cos(y/8)) * 1.0
         height += noise
         
-        # Ensure the height is in the range [-10, 10]
+        # Ensure the height is in the range [-10, 10] but allow for more extreme values
         return max(-10, min(10, height))
 
 
@@ -227,6 +227,9 @@ class Polygraph3DPlugin(Plugin):
         # Cache the result
         self.height_map[key] = height
         
+        # Print for debugging
+        print(f"Height for ({x}, {y}): {height}")
+        
         return height
     
     def clear_height_cache(self):
@@ -279,7 +282,7 @@ class Polygraph3DPlugin(Plugin):
                     if char == ' ':
                         continue
                         
-                    # Get the height from our plugin
+                    # Get the height from our plugin - scale it for better visibility
                     height = self.get_height(world_x, world_y)
                     
                     # Determine color based on character
@@ -288,8 +291,9 @@ class Polygraph3DPlugin(Plugin):
                     # Create a 3D character object
                     char_obj = Character3D(char, world_x - gui_plugin.game.world_x, world_y - gui_plugin.game.world_y, color)
                     
-                    # Override the height with our calculated height
-                    char_obj.height = 0.1 + (height + 10) / 20.0  # Convert from [-10, 10] to [0.1, 1.1]
+                    # Override the height with our calculated height - amplify for better visibility
+                    # Convert from [-10, 10] to [0.1, 5.1] for more dramatic height differences
+                    char_obj.height = 0.1 + (height + 10) / 4.0
                     
                     # Add to the character map
                     with gui_plugin.lock:
@@ -368,8 +372,9 @@ class Polygraph3DPlugin(Plugin):
                             # Create a 3D character object
                             char_obj = Character3D(char, world_x - self_gui.game.world_x, world_y - self_gui.game.world_y, color)
                             
-                            # Override the height with our calculated height
-                            char_obj.height = 0.1 + (height + 10) / 20.0  # Convert from [-10, 10] to [0.1, 1.1]
+                            # Override the height with our calculated height - amplify for better visibility
+                            # Convert from [-10, 10] to [0.1, 5.1] for more dramatic height differences
+                            char_obj.height = 0.1 + (height + 10) / 4.0
                             
                             # Add to the character map
                             with self_gui.lock:
