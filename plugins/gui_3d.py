@@ -68,7 +68,7 @@ class GUI3DPlugin(Plugin):
         self.show_terrain_mesh = False  # New option for terrain mesh
         self.terrain_mesh_style = "filled"  # Options: "filled", "wireframe"
         self.terrain_mesh_opacity = 0.7  # 0.0 to 1.0
-        self.terrain_color_scheme = "height"  # Options: "height", "viridis", "plasma", "inferno", "magma", "cividis"
+        self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
         self.stick_dot_size = 8.0  # Size of dots at the end of sticks
         
         # Load settings if they exist
@@ -276,6 +276,31 @@ class GUI3DPlugin(Plugin):
                 r = 0.497 + t * (0.993 - 0.497)
                 g = 0.731 + t * (0.906 - 0.731)
                 b = 0.142 + t * (0.143 - 0.142)
+        elif scheme == "viridis_inverted":
+            # Inverted Viridis colormap
+            if norm_height < 0.25:
+                # Light yellow to yellow
+                r = 0.993 + norm_height * 4 * (0.497 - 0.993)
+                g = 0.906 + norm_height * 4 * (0.731 - 0.906)
+                b = 0.143 + norm_height * 4 * (0.142 - 0.143)
+            elif norm_height < 0.5:
+                # Yellow to green
+                t = (norm_height - 0.25) * 4
+                r = 0.497 + t * (0.094 - 0.497)
+                g = 0.731 + t * (0.464 - 0.731)
+                b = 0.142 + t * (0.558 - 0.142)
+            elif norm_height < 0.75:
+                # Green to blue
+                t = (norm_height - 0.5) * 4
+                r = 0.094 + t * (0.128 - 0.094)
+                g = 0.464 + t * (0.267 - 0.464)
+                b = 0.558 + t * (0.533 - 0.558)
+            else:
+                # Blue to dark purple
+                t = (norm_height - 0.75) * 4
+                r = 0.128 + t * (0.267 - 0.128)
+                g = 0.267 + t * (0.004 - 0.267)
+                b = 0.533 + t * (0.329 - 0.533)
         elif scheme == "plasma":
             # Plasma colormap approximation
             if norm_height < 0.25:
@@ -574,30 +599,28 @@ class GUI3DPlugin(Plugin):
         # Make a copy of the characters dictionary to avoid modification during iteration
         with self.lock:
             characters_copy = dict(self.characters)
-        
-        # Sort characters by distance from camera for proper rendering (back to front)
-        # This ensures proper depth ordering and occlusion
-        sorted_chars = sorted(
-            characters_copy.values(),
-            key=lambda c: (c.x**2 + c.y**2)  # Sort by distance from center (camera position)
-        )
-        
-        # Draw the ground mesh if enabled
-        if self.show_mesh:
-            self.draw_ground_plane()
+            
+        # Sort characters by height for proper rendering (draw from back to front)
+        sorted_chars = sorted(characters_copy.values(), key=lambda c: c.y)  # Sort by y position (depth)
         
         for char_obj in sorted_chars:
             # Set character position
             glPushMatrix()
             
-            # Position the character with its base at ground level
-            # Y is up in OpenGL, so we translate by height/2 to center it vertically
-            glTranslatef(char_obj.x, char_obj.height / 2, char_obj.y)
-            
-            # Scale the character based on height for better visibility
-            # Taller characters appear larger overall
-            scale_factor = 0.8 + char_obj.height * 0.3
-            glScalef(scale_factor, 1.0, scale_factor)
+            # Position the character
+            # For negative heights, we need to adjust the vertical position
+            if char_obj.height >= 0:
+                # Positive height: Position with base at ground level
+                glTranslatef(char_obj.x, char_obj.height / 2, char_obj.y)
+                # Scale the character based on height for better visibility
+                scale_factor = 0.8 + abs(char_obj.height) * 0.3
+                glScalef(scale_factor, 1.0, scale_factor)
+            else:
+                # Negative height: Position with top at ground level
+                glTranslatef(char_obj.x, char_obj.height / 2, char_obj.y)
+                # Scale the character based on height for better visibility
+                scale_factor = 0.8 + abs(char_obj.height) * 0.3
+                glScalef(scale_factor, 1.0, scale_factor)
             
             # Always face the camera (billboarding)
             modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
@@ -617,7 +640,7 @@ class GUI3DPlugin(Plugin):
                 
                 # Calculate quad size based on texture aspect ratio
                 aspect = texture_info['width'] / texture_info['height']
-                quad_height = char_obj.height
+                quad_height = abs(char_obj.height)  # Use absolute height for quad size
                 quad_width = quad_height * aspect
                 
                 # Draw textured quad
@@ -630,7 +653,7 @@ class GUI3DPlugin(Plugin):
             else:
                 # Fallback: draw a colored cube for characters without textures
                 glColor4f(*char_obj.color)
-                self.draw_cube(char_obj.height / 2)  # Scale cube by height
+                self.draw_cube(abs(char_obj.height) / 2)  # Use absolute height for cube size
             
             glPopMatrix()
             
@@ -1072,6 +1095,8 @@ class GUI3DPlugin(Plugin):
                     if settings[current_selection]["value"] == "height":
                         settings[current_selection]["value"] = "viridis"
                     elif settings[current_selection]["value"] == "viridis":
+                        settings[current_selection]["value"] = "viridis_inverted"
+                    elif settings[current_selection]["value"] == "viridis_inverted":
                         settings[current_selection]["value"] = "plasma"
                     elif settings[current_selection]["value"] == "plasma":
                         settings[current_selection]["value"] = "inferno"
