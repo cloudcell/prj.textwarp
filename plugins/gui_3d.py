@@ -367,10 +367,21 @@ class GUI3DPlugin(Plugin):
         with self.lock:
             characters_copy = dict(self.characters)
         
-        for char_obj in characters_copy.values():
+        # Sort characters by height for proper rendering (draw from back to front)
+        sorted_chars = sorted(characters_copy.values(), key=lambda c: c.height)
+        
+        for char_obj in sorted_chars:
             # Set character position
             glPushMatrix()
+            
+            # Position the character with its base at ground level
+            # This makes the height more visually apparent
             glTranslatef(char_obj.x, char_obj.height / 2, char_obj.y)  # Y is up in OpenGL
+            
+            # Scale the character based on its height
+            # This makes taller characters more visually distinct
+            scale_factor = 0.5 + char_obj.height / 2.0
+            glScalef(scale_factor, char_obj.height, scale_factor)
             
             # Always face the camera (billboarding)
             modelview = glGetDoublev(GL_MODELVIEW_MATRIX)

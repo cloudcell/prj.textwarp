@@ -390,16 +390,9 @@ class TextAdventure:
                         break
                 
                 if polygraph_plugin:
-                    # Temporarily exit menu mode
-                    self.in_menu = False
-                    self.needs_redraw = True
-                    
                     # Show 3D Polygraph settings menu
+                    # The plugin will handle menu state management internally
                     polygraph_plugin.show_settings_menu()
-                    
-                    # Return to menu mode
-                    self.in_menu = True
-                    self.needs_redraw = True
                 else:
                     # Show message that plugin is not active
                     self.message = "3D Polygraph plugin is not active. Please activate it first."
@@ -1155,9 +1148,15 @@ class TextAdventure:
             pass  # Ignore errors if the file doesn't exist or is invalid
 
 def main():
-    screen = curses.initscr()
-    game = TextAdventure(screen)
-    game.run()
+    """Main function to run the game."""
+    try:
+        # Initialize curses
+        screen = curses.initscr()
+        game = TextAdventure(screen)
+        game.run()
+    finally:
+        # Clean up curses
+        curses.endwin()
 
 if __name__ == "__main__":
     main()

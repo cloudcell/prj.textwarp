@@ -235,6 +235,10 @@ class Polygraph3DPlugin(Plugin):
         # Clamp to min/max height settings
         height = max(self.min_height, min(self.max_height, height))
         
+        # Add a small random variation to ensure no two adjacent positions have exactly the same height
+        import random
+        height += random.uniform(-0.5, 0.5)
+        
         # Cache the height
         self.height_map[key] = height
         
@@ -300,9 +304,9 @@ class Polygraph3DPlugin(Plugin):
                     char_obj = Character3D(char, world_x - gui_plugin.game.world_x, world_y - gui_plugin.game.world_y, color)
                     
                     # Override the height with our calculated height - using configurable settings
-                    # Convert from [min_height, max_height] to [0.1, 5.1] for more dramatic height differences
+                    # Apply a more dramatic height scaling to make differences more visible
                     normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
-                    char_obj.height = 0.1 + normalized_height * (5.0 / self.height_scale)
+                    char_obj.height = 0.1 + normalized_height * (10.0 / self.height_scale)
                     
                     # Add to the character map
                     with gui_plugin.lock:
@@ -342,8 +346,10 @@ class Polygraph3DPlugin(Plugin):
     
     def show_settings_menu(self):
         """Show the settings menu for the 3D Polygraph plugin."""
-        # We'll use the game's screen which already has curses initialized
-        screen = self.game.screen
+        # Store original settings in case user cancels
+        original_min_height = self.min_height
+        original_max_height = self.max_height
+        original_height_scale = self.height_scale
         
         # Variables for menu navigation
         current_selection = 0
@@ -354,93 +360,96 @@ class Polygraph3DPlugin(Plugin):
             {"name": "Height Scale", "value": self.height_scale, "min": 1.0, "max": 20.0, "step": 0.5}
         ]
         
-        # Get curses module from the game to avoid importing it directly
+        # Get curses module from the game
         curses = self.game.curses
         
-        # Main loop for settings menu
-        while in_settings_menu:
-            try:
-                # Clear screen
-                screen.clear()
-                
-                # Draw header
-                screen.addstr(0, 0, "3D Polygraph Settings", self.game.menu_color | curses.A_BOLD)
-                screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
-                
-                # Draw instructions
-                screen.addstr(2, 0, "Use ↑/↓ to select a setting, ←/→ to change values", self.game.menu_color)
-                screen.addstr(3, 0, "Press ENTER to apply changes, ESC to cancel", self.game.menu_color)
-                screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
-                
-                # Draw settings
-                for i, setting in enumerate(settings):
-                    # Highlight the selected item
-                    if i == current_selection:
-                        attr = self.game.selected_menu_color | curses.A_BOLD
-                    else:
-                        attr = self.game.menu_color
-                    
-                    # Draw the item
-                    screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
-                    
-                    # Draw range information
-                    range_info = f"(Range: {setting['min']} to {setting['max']})"
-                    screen.addstr(i + 6, 40, range_info, self.game.menu_color)
-                
-                # Draw footer
-                screen.addstr(self.game.max_y - 2, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
-                screen.addstr(self.game.max_y - 1, 0, "R: Reset to defaults", self.game.menu_color)
-                
-                # Refresh screen
-                screen.refresh()
-                
-                # Get input
-                key = screen.getch()
-                
-                # Handle input
-                if key == curses.KEY_UP:
-                    current_selection = (current_selection - 1) % len(settings)
-                elif key == curses.KEY_DOWN:
-                    current_selection = (current_selection + 1) % len(settings)
-                elif key == curses.KEY_LEFT:
-                    # Decrease value
-                    setting = settings[current_selection]
-                    setting['value'] = max(setting['min'], setting['value'] - setting['step'])
-                elif key == curses.KEY_RIGHT:
-                    # Increase value
-                    setting = settings[current_selection]
-                    setting['value'] = min(setting['max'], setting['value'] + setting['step'])
-                elif key == ord('r') or key == ord('R'):
-                    # Reset to defaults
-                    settings[0]['value'] = -10  # min_height
-                    settings[1]['value'] = 10   # max_height
-                    settings[2]['value'] = 4.0  # height_scale
-                elif key == 10:  # Enter key
-                    # Apply changes
-                    self.min_height = settings[0]['value']
-                    self.max_height = settings[1]['value']
-                    self.height_scale = settings[2]['value']
-                    
-                    # Save settings
-                    self.save_settings()
-                    
-                    # Clear height cache to apply new settings
-                    self.height_map = {}
-                    
-                    # Exit menu
-                    in_settings_menu = False
-                elif key == 27:  # Escape key
-                    # Exit without saving
-                    in_settings_menu = False
-            except Exception as e:
-                # Handle any exceptions to prevent the menu from crashing
-                screen.clear()
-                screen.addstr(0, 0, f"Error: {str(e)}", curses.A_BOLD)
-                screen.addstr(1, 0, "Press any key to continue...", curses.A_BOLD)
-                screen.refresh()
-                screen.getch()
+        # Save current state
+        self.game.in_menu = False
+        self.game.needs_redraw = True
         
-        # Force redraw
+        # Main loop for settings menu
+        while in_settings_menu and self.game.running:
+            # Clear screen
+            self.game.screen.clear()
+            
+            # Draw header
+            max_y, max_x = self.game.screen.getmaxyx()
+            self.game.screen.addstr(0, 0, "3D Polygraph Settings", curses.A_BOLD)
+            self.game.screen.addstr(1, 0, "═" * (max_x - 1))
+            
+            # Draw instructions
+            self.game.screen.addstr(2, 0, "Use ↑/↓ to select a setting, ←/→ to change values")
+            self.game.screen.addstr(3, 0, "Press ENTER to apply changes, ESC to cancel")
+            self.game.screen.addstr(4, 0, "═" * (max_x - 1))
+            
+            # Draw settings
+            for i, setting in enumerate(settings):
+                # Highlight the selected item
+                if i == current_selection:
+                    attr = curses.A_REVERSE | curses.A_BOLD
+                else:
+                    attr = 0
+                
+                # Draw the item
+                self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
+                
+                # Draw range information
+                range_info = f"(Range: {setting['min']} to {setting['max']})"
+                self.game.screen.addstr(i + 6, 40, range_info)
+            
+            # Draw footer
+            self.game.screen.addstr(max_y - 2, 0, "═" * (max_x - 1))
+            self.game.screen.addstr(max_y - 1, 0, "R: Reset to defaults")
+            
+            # Refresh screen
+            self.game.screen.refresh()
+            
+            # Get input
+            key = self.game.screen.getch()
+            
+            # Handle input
+            if key == curses.KEY_UP:
+                current_selection = (current_selection - 1) % len(settings)
+            elif key == curses.KEY_DOWN:
+                current_selection = (current_selection + 1) % len(settings)
+            elif key == curses.KEY_LEFT:
+                # Decrease value
+                setting = settings[current_selection]
+                setting['value'] = max(setting['min'], setting['value'] - setting['step'])
+            elif key == curses.KEY_RIGHT:
+                # Increase value
+                setting = settings[current_selection]
+                setting['value'] = min(setting['max'], setting['value'] + setting['step'])
+            elif key == ord('r') or key == ord('R'):
+                # Reset to defaults
+                settings[0]['value'] = -10  # min_height
+                settings[1]['value'] = 10   # max_height
+                settings[2]['value'] = 4.0  # height_scale
+            elif key == 10:  # Enter key
+                # Apply changes
+                self.min_height = settings[0]['value']
+                self.max_height = settings[1]['value']
+                self.height_scale = settings[2]['value']
+                
+                # Save settings
+                self.save_settings()
+                
+                # Clear height cache to apply new settings
+                self.height_map = {}
+                
+                # Exit menu
+                in_settings_menu = False
+            elif key == 27:  # Escape key
+                # Restore original settings
+                self.min_height = original_min_height
+                self.max_height = original_max_height
+                self.height_scale = original_height_scale
+                
+                # Exit without saving
+                in_settings_menu = False
+        
+        # Restore game state
+        self.game.in_menu = True
         self.game.needs_redraw = True
     
     def activate(self):
@@ -513,9 +522,8 @@ class Polygraph3DPlugin(Plugin):
                             char_obj = Character3D(char, world_x - self_gui.game.world_x, world_y - self_gui.game.world_y, color)
                             
                             # Override the height with our calculated height - using configurable settings
-                            # Convert from [min_height, max_height] to [0.1, 5.1] for more dramatic height differences
                             normalized_height = (height - self.min_height) / (self.max_height - self.min_height)
-                            char_obj.height = 0.1 + normalized_height * (5.0 / self.height_scale)
+                            char_obj.height = 0.1 + normalized_height * (10.0 / self.height_scale)
                             
                             # Add to the character map
                             with self_gui.lock:
