@@ -12,6 +12,7 @@ from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
 from plugins.network import NetworkPlugin
 from plugins.gui_3d import GUI3DPlugin
+import copy
 
 class TextAdventure:
     def __init__(self):
@@ -104,7 +105,7 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Network", "Exit"],
+            "main": ["Resume Game", "Plugin Management", "Color Settings", "Network", "Exit"],
             "plugins": []  # Will be populated with plugin names
         }
         
@@ -158,29 +159,7 @@ class TextAdventure:
         self.screen.keypad(True)
         
         # Initialize colors
-        curses.init_pair(1, curses.COLOR_RED, -1)  # Red for player
-        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)  # White on black for panels
-        curses.init_pair(3, curses.COLOR_GREEN, -1)  # Green for @ symbols
-        curses.init_pair(4, curses.COLOR_YELLOW, -1)  # Yellow for FPS counter
-        curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_BLACK)  # Black on black for snake indicator
-        curses.init_pair(6, curses.COLOR_BLUE, -1)  # Blue for snakes
-        curses.init_pair(7, curses.COLOR_CYAN, -1)  # Cyan for fuel
-        curses.init_pair(8, curses.COLOR_MAGENTA, -1)  # Magenta for menu
-        curses.init_pair(9, 208, -1)  # Orange for eggs ('0')
-        curses.init_pair(10, 94, -1)  # Brown for dots ('.')
-        curses.init_pair(11, 8, -1)  # Grey for background
-        
-        self.player_color = curses.color_pair(1)
-        self.panel_color = curses.color_pair(2)
-        self.at_symbol_color = curses.color_pair(3)
-        self.zero_color = curses.color_pair(9)  # Changed to orange
-        self.fuel_color = curses.color_pair(7)
-        self.snake_color = curses.color_pair(6)
-        self.snake_indicator_color = curses.color_pair(5)
-        self.fps_color = curses.color_pair(4)
-        self.menu_color = curses.color_pair(8)
-        self.dot_color = curses.color_pair(10)  # Brown for dots
-        self.background_color = curses.color_pair(11)  # Grey for background
+        self.initialize_colors()
         
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
@@ -188,6 +167,85 @@ class TextAdventure:
         # Setup colors
         self.screen.timeout(50)  # Non-blocking input with 50ms timeout
         
+    def initialize_colors(self):
+        """Initialize color pairs for the game."""
+        # Define colors
+        curses.start_color()
+        curses.use_default_colors()
+        
+        # Define color pairs
+        self.background_color = curses.color_pair(0)  # Default (usually white on black)
+        
+        # Player color (red)
+        curses.init_pair(1, curses.COLOR_RED, -1)
+        self.player_color = curses.color_pair(1)
+        
+        # Menu color (white on blue)
+        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLUE)
+        self.menu_color = curses.color_pair(2)
+        
+        # Selected menu item color (yellow on blue)
+        curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+        self.selected_menu_color = curses.color_pair(3)
+        
+        # Panel color (white on green)
+        curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_GREEN)
+        self.panel_color = curses.color_pair(4)
+        
+        # @ symbol color (green)
+        curses.init_pair(5, curses.COLOR_GREEN, -1)
+        self.at_symbol_color = curses.color_pair(5)
+        
+        # Snake indicator color (white on black)
+        curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        self.snake_indicator_color = curses.color_pair(6)
+        
+        # FPS counter color (yellow on black)
+        curses.init_pair(7, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        self.fps_color = curses.color_pair(7)
+        
+        # Snake color (dark blue)
+        curses.init_pair(8, curses.COLOR_BLUE, -1)
+        self.snake_color = curses.color_pair(8)
+        
+        # Fuel color (magenta)
+        curses.init_pair(9, curses.COLOR_MAGENTA, -1)
+        self.fuel_color = curses.color_pair(9)
+        
+        # Zero color (orange - approximated with yellow)
+        curses.init_pair(10, curses.COLOR_YELLOW, -1)
+        self.zero_color = curses.color_pair(10)
+        
+        # Dot color (brown - approximated with red+black background)
+        curses.init_pair(11, curses.COLOR_RED, curses.COLOR_BLACK)
+        self.dot_color = curses.color_pair(11)
+        
+        # Store color settings for the color menu
+        self.color_settings = {
+            "Player": {"color_id": 1, "fg": curses.COLOR_RED, "bg": -1, "attr": curses.A_NORMAL},
+            "Menu": {"color_id": 2, "fg": curses.COLOR_WHITE, "bg": curses.COLOR_BLUE, "attr": curses.A_NORMAL},
+            "Selected Menu": {"color_id": 3, "fg": curses.COLOR_YELLOW, "bg": curses.COLOR_BLUE, "attr": curses.A_NORMAL},
+            "Panel": {"color_id": 4, "fg": curses.COLOR_WHITE, "bg": curses.COLOR_GREEN, "attr": curses.A_NORMAL},
+            "@ Symbol": {"color_id": 5, "fg": curses.COLOR_GREEN, "bg": -1, "attr": curses.A_NORMAL},
+            "Snake Indicator": {"color_id": 6, "fg": curses.COLOR_WHITE, "bg": curses.COLOR_BLACK, "attr": curses.A_NORMAL},
+            "FPS Counter": {"color_id": 7, "fg": curses.COLOR_YELLOW, "bg": curses.COLOR_BLACK, "attr": curses.A_NORMAL},
+            "Snake": {"color_id": 8, "fg": curses.COLOR_BLUE, "bg": -1, "attr": curses.A_NORMAL},
+            "Fuel": {"color_id": 9, "fg": curses.COLOR_MAGENTA, "bg": -1, "attr": curses.A_NORMAL},
+            "Egg": {"color_id": 10, "fg": curses.COLOR_YELLOW, "bg": -1, "attr": curses.A_NORMAL},
+            "Dot": {"color_id": 11, "fg": curses.COLOR_RED, "bg": curses.COLOR_BLACK, "attr": curses.A_NORMAL},
+            "Coordinate Notches": {"color_id": 12, "fg": curses.COLOR_WHITE, "bg": -1, "attr": curses.A_NORMAL}
+        }
+        
+        # Initialize the coordinate notches color
+        curses.init_pair(12, curses.COLOR_WHITE, -1)
+        self.coordinate_notches_color = curses.color_pair(12)
+        
+        # Save the original color settings
+        self.original_color_settings = copy.deepcopy(self.color_settings)
+        
+        # Load color settings from file
+        self.load_color_settings()
+
     def handle_input(self):
         # Get input
         try:
@@ -300,7 +358,18 @@ class TextAdventure:
             elif self.menu_selection == 1:  # Plugin Management
                 self.current_menu = "plugins"
                 self.menu_selection = 0
-            elif self.menu_selection == 2:  # Network
+            elif self.menu_selection == 2:  # Color Settings
+                # Temporarily exit menu mode
+                self.in_menu = False
+                self.needs_redraw = True
+                
+                # Show color settings menu
+                self.show_color_settings_menu()
+                
+                # Return to menu mode
+                self.in_menu = True
+                self.needs_redraw = True
+            elif self.menu_selection == 3:  # Network
                 # Find the network plugin
                 network_plugin = None
                 for plugin in self.plugins:
@@ -319,7 +388,7 @@ class TextAdventure:
                     # Return to menu mode
                     self.in_menu = True
                     self.needs_redraw = True
-            elif self.menu_selection == 3:  # Exit
+            elif self.menu_selection == 4:  # Exit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
@@ -486,8 +555,8 @@ class TextAdventure:
             if screen_x < 3 or screen_x >= self.max_x:
                 continue
                 
-            # Get the last digit
-            last_digit = abs(x) % 10
+            # Get the tens digit (second digit from the right)
+            tens_digit = (abs(x) // 10) % 10
             
             # Determine sign
             sign = '+' if x >= 0 else '-'
@@ -495,13 +564,13 @@ class TextAdventure:
             # Draw the notch
             try:
                 # Line 3: Vertical line
-                self.screen.addch(3, screen_x, '|')
+                self.screen.addch(3, screen_x, '|', self.coordinate_notches_color)
                 
                 # Line 4: Sign
-                self.screen.addch(4, screen_x, sign)
+                self.screen.addch(4, screen_x, sign, self.coordinate_notches_color)
                 
-                # Line 5: Last digit
-                self.screen.addch(5, screen_x, str(last_digit))
+                # Line 5: Tens digit
+                self.screen.addch(5, screen_x, str(tens_digit), self.coordinate_notches_color)
             except:
                 pass  # Ignore errors from writing to the bottom-right corner
         
@@ -514,8 +583,8 @@ class TextAdventure:
             if screen_y < 6 or screen_y >= self.max_y:
                 continue
                 
-            # Get the last digit
-            last_digit = abs(y) % 10
+            # Get the tens digit (second digit from the right)
+            tens_digit = (abs(y) // 10) % 10
             
             # Determine sign
             sign = '+' if y >= 0 else '-'
@@ -523,13 +592,13 @@ class TextAdventure:
             # Draw the notch
             try:
                 # Column 0: Horizontal line
-                self.screen.addch(screen_y, 0, '-')
+                self.screen.addch(screen_y, 0, '-', self.coordinate_notches_color)
                 
                 # Column 1: Sign
-                self.screen.addch(screen_y, 1, sign)
+                self.screen.addch(screen_y, 1, sign, self.coordinate_notches_color)
                 
-                # Column 2: Last digit
-                self.screen.addch(screen_y, 2, str(last_digit))
+                # Column 2: Tens digit
+                self.screen.addch(screen_y, 2, str(tens_digit), self.coordinate_notches_color)
             except:
                 pass  # Ignore errors from writing to the bottom-right corner
 
@@ -554,9 +623,9 @@ class TextAdventure:
                 
                 # Determine color based on character
                 color = self.background_color
-                if char == 'X':
-                    color = self.player_color
-                elif char == '@':
+                # Don't apply player color to 'X' characters in the background
+                # Only the main player 'X' will get the player color
+                if char == '@':
                     color = self.at_symbol_color
                 elif char == '0':
                     color = self.zero_color
@@ -756,6 +825,251 @@ class TextAdventure:
     def handle_resize_signal(self, signum, frame):
         """Signal handler for SIGWINCH (window resize)."""
         self.check_resize = True
+
+    def show_color_settings_menu(self):
+        """Show the color settings menu."""
+        # Variables for menu navigation
+        current_selection = 0
+        color_names = list(self.color_settings.keys())
+        in_color_menu = True
+        
+        # Color options
+        color_options = {
+            0: {"name": "Black", "value": curses.COLOR_BLACK},
+            1: {"name": "Red", "value": curses.COLOR_RED},
+            2: {"name": "Green", "value": curses.COLOR_GREEN},
+            3: {"name": "Yellow", "value": curses.COLOR_YELLOW},
+            4: {"name": "Blue", "value": curses.COLOR_BLUE},
+            5: {"name": "Magenta", "value": curses.COLOR_MAGENTA},
+            6: {"name": "Cyan", "value": curses.COLOR_CYAN},
+            7: {"name": "White", "value": curses.COLOR_WHITE},
+            8: {"name": "Default", "value": -1}
+        }
+        
+        # Main loop for color settings menu
+        while in_color_menu:
+            # Clear screen
+            self.screen.clear()
+            
+            # Draw header
+            self.screen.addstr(0, 0, "Color Settings", self.menu_color | curses.A_BOLD)
+            self.screen.addstr(1, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw instructions
+            self.screen.addstr(2, 0, "Use ↑/↓ to select an element, ←/→ to change foreground/background color", self.menu_color)
+            self.screen.addstr(3, 0, "Press ENTER to apply changes, ESC to exit", self.menu_color)
+            self.screen.addstr(4, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw color settings
+            for i, name in enumerate(color_names):
+                setting = self.color_settings[name]
+                # Create a sample of the color
+                color_pair = curses.color_pair(setting['color_id'])
+                
+                # Get color names
+                fg_name = "Default" if setting['fg'] == -1 else next((opt["name"] for opt in color_options.values() if opt["value"] == setting['fg']), "Unknown")
+                bg_name = "Default" if setting['bg'] == -1 else next((opt["name"] for opt in color_options.values() if opt["value"] == setting['bg']), "Unknown")
+                
+                # Highlight the selected item
+                if i == current_selection:
+                    attr = self.selected_menu_color | curses.A_BOLD
+                else:
+                    attr = self.menu_color
+                
+                # Draw the item
+                self.screen.addstr(i + 6, 2, f"{name}", attr)
+                self.screen.addstr(i + 6, 25, f"FG: {fg_name}", attr)
+                self.screen.addstr(i + 6, 45, f"BG: {bg_name}", attr)
+                
+                # Draw a sample with the current color
+                try:
+                    sample_text = " SAMPLE "
+                    self.screen.addstr(i + 6, 65, sample_text, color_pair | setting['attr'])
+                except:
+                    pass
+            
+            # Draw footer
+            self.screen.addstr(self.max_y - 2, 0, "═" * (self.max_x - 1), self.menu_color)
+            self.screen.addstr(self.max_y - 1, 0, "R: Reset to defaults", self.menu_color)
+            
+            # Refresh screen
+            self.screen.refresh()
+            
+            # Get input
+            key = self.screen.getch()
+            
+            # Handle input
+            if key == curses.KEY_UP:
+                current_selection = (current_selection - 1) % len(color_names)
+            elif key == curses.KEY_DOWN:
+                current_selection = (current_selection + 1) % len(color_names)
+            elif key == curses.KEY_LEFT:
+                # Change foreground color
+                name = color_names[current_selection]
+                setting = self.color_settings[name]
+                current_fg = setting['fg']
+                
+                # Find the next color in the list
+                next_color_idx = 0
+                for idx, opt in color_options.items():
+                    if opt["value"] == current_fg:
+                        next_color_idx = (idx - 1) % len(color_options)
+                        break
+                
+                # Update the color
+                setting['fg'] = color_options[next_color_idx]["value"]
+                curses.init_pair(setting['color_id'], setting['fg'], setting['bg'])
+                
+                # Update the attribute if needed
+                if name == "Player":
+                    self.player_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Menu":
+                    self.menu_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Selected Menu":
+                    self.selected_menu_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Panel":
+                    self.panel_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "@ Symbol":
+                    self.at_symbol_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Snake Indicator":
+                    self.snake_indicator_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "FPS Counter":
+                    self.fps_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Snake":
+                    self.snake_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Fuel":
+                    self.fuel_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Egg":
+                    self.zero_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Dot":
+                    self.dot_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Coordinate Notches":
+                    self.coordinate_notches_color = curses.color_pair(setting['color_id']) | setting['attr']
+                
+            elif key == curses.KEY_RIGHT:
+                # Change background color
+                name = color_names[current_selection]
+                setting = self.color_settings[name]
+                current_bg = setting['bg']
+                
+                # Find the next color in the list
+                next_color_idx = 0
+                for idx, opt in color_options.items():
+                    if opt["value"] == current_bg:
+                        next_color_idx = (idx + 1) % len(color_options)
+                        break
+                
+                # Update the color
+                setting['bg'] = color_options[next_color_idx]["value"]
+                curses.init_pair(setting['color_id'], setting['fg'], setting['bg'])
+                
+                # Update the attribute if needed
+                if name == "Player":
+                    self.player_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Menu":
+                    self.menu_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Selected Menu":
+                    self.selected_menu_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Panel":
+                    self.panel_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "@ Symbol":
+                    self.at_symbol_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Snake Indicator":
+                    self.snake_indicator_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "FPS Counter":
+                    self.fps_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Snake":
+                    self.snake_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Fuel":
+                    self.fuel_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Egg":
+                    self.zero_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Dot":
+                    self.dot_color = curses.color_pair(setting['color_id']) | setting['attr']
+                elif name == "Coordinate Notches":
+                    self.coordinate_notches_color = curses.color_pair(setting['color_id']) | setting['attr']
+                
+            elif key == ord('r') or key == ord('R'):
+                # Reset to defaults
+                self.color_settings = copy.deepcopy(self.original_color_settings)
+                
+                # Reinitialize all color pairs
+                for name, setting in self.color_settings.items():
+                    curses.init_pair(setting['color_id'], setting['fg'], setting['bg'])
+                
+                # Update all color attributes
+                self.player_color = curses.color_pair(self.color_settings["Player"]["color_id"]) | self.color_settings["Player"]["attr"]
+                self.menu_color = curses.color_pair(self.color_settings["Menu"]["color_id"]) | self.color_settings["Menu"]["attr"]
+                self.selected_menu_color = curses.color_pair(self.color_settings["Selected Menu"]["color_id"]) | self.color_settings["Selected Menu"]["attr"]
+                self.panel_color = curses.color_pair(self.color_settings["Panel"]["color_id"]) | self.color_settings["Panel"]["attr"]
+                self.at_symbol_color = curses.color_pair(self.color_settings["@ Symbol"]["color_id"]) | self.color_settings["@ Symbol"]["attr"]
+                self.snake_indicator_color = curses.color_pair(self.color_settings["Snake Indicator"]["color_id"]) | self.color_settings["Snake Indicator"]["attr"]
+                self.fps_color = curses.color_pair(self.color_settings["FPS Counter"]["color_id"]) | self.color_settings["FPS Counter"]["attr"]
+                self.snake_color = curses.color_pair(self.color_settings["Snake"]["color_id"]) | self.color_settings["Snake"]["attr"]
+                self.fuel_color = curses.color_pair(self.color_settings["Fuel"]["color_id"]) | self.color_settings["Fuel"]["attr"]
+                self.zero_color = curses.color_pair(self.color_settings["Egg"]["color_id"]) | self.color_settings["Egg"]["attr"]
+                self.dot_color = curses.color_pair(self.color_settings["Dot"]["color_id"]) | self.color_settings["Dot"]["attr"]
+                self.coordinate_notches_color = curses.color_pair(self.color_settings["Coordinate Notches"]["color_id"]) | self.color_settings["Coordinate Notches"]["attr"]
+                
+            elif key == 10:  # Enter key
+                # Save color settings
+                self.save_color_settings()
+                in_color_menu = False
+            elif key == 27:  # Escape key
+                in_color_menu = False
+        
+        # Force redraw
+        self.needs_redraw = True
+    
+    def save_color_settings(self):
+        """Save the current color settings to a file."""
+        # Create a dictionary to store the color settings
+        color_data = {}
+        for name, setting in self.color_settings.items():
+            color_data[name] = {
+                "fg": setting['fg'],
+                "bg": setting['bg'],
+                "attr": setting['attr']
+            }
+        
+        # Save the color settings to a file
+        try:
+            with open("colors.json", "w") as f:
+                json.dump(color_data, f)
+        except:
+            pass  # Ignore errors
+    
+    def load_color_settings(self):
+        """Load color settings from a file."""
+        try:
+            with open("colors.json", "r") as f:
+                color_data = json.load(f)
+            
+            # Update the color settings
+            for name, data in color_data.items():
+                if name in self.color_settings:
+                    self.color_settings[name]['fg'] = data['fg']
+                    self.color_settings[name]['bg'] = data['bg']
+                    self.color_settings[name]['attr'] = data['attr']
+                    
+                    # Update the color pair
+                    curses.init_pair(self.color_settings[name]['color_id'], data['fg'], data['bg'])
+            
+            # Update all color attributes
+            self.player_color = curses.color_pair(self.color_settings["Player"]["color_id"]) | self.color_settings["Player"]["attr"]
+            self.menu_color = curses.color_pair(self.color_settings["Menu"]["color_id"]) | self.color_settings["Menu"]["attr"]
+            self.selected_menu_color = curses.color_pair(self.color_settings["Selected Menu"]["color_id"]) | self.color_settings["Selected Menu"]["attr"]
+            self.panel_color = curses.color_pair(self.color_settings["Panel"]["color_id"]) | self.color_settings["Panel"]["attr"]
+            self.at_symbol_color = curses.color_pair(self.color_settings["@ Symbol"]["color_id"]) | self.color_settings["@ Symbol"]["attr"]
+            self.snake_indicator_color = curses.color_pair(self.color_settings["Snake Indicator"]["color_id"]) | self.color_settings["Snake Indicator"]["attr"]
+            self.fps_color = curses.color_pair(self.color_settings["FPS Counter"]["color_id"]) | self.color_settings["FPS Counter"]["attr"]
+            self.snake_color = curses.color_pair(self.color_settings["Snake"]["color_id"]) | self.color_settings["Snake"]["attr"]
+            self.fuel_color = curses.color_pair(self.color_settings["Fuel"]["color_id"]) | self.color_settings["Fuel"]["attr"]
+            self.zero_color = curses.color_pair(self.color_settings["Egg"]["color_id"]) | self.color_settings["Egg"]["attr"]
+            self.dot_color = curses.color_pair(self.color_settings["Dot"]["color_id"]) | self.color_settings["Dot"]["attr"]
+            self.coordinate_notches_color = curses.color_pair(self.color_settings["Coordinate Notches"]["color_id"]) | self.color_settings["Coordinate Notches"]["attr"]
+        except:
+            pass  # Ignore errors if the file doesn't exist or is invalid
 
 def main():
     game = TextAdventure()
