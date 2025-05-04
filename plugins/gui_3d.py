@@ -106,6 +106,93 @@ class GUI3DPlugin(Plugin):
         # Update the character map based on the current game state
         self.update_character_map()
         
+        # Directly check for snakes to ensure they're visualized
+        self.check_for_snakes()
+    
+    def check_for_snakes(self):
+        """Directly check for snakes in the game and add them to the visualization."""
+        # Skip if not active or running
+        if not self.active or not self.running:
+            return
+            
+        # Find the snake plugin
+        snake_plugin = None
+        for plugin in self.game.plugins:
+            if hasattr(plugin, 'snakes') and plugin.active:
+                snake_plugin = plugin
+                break
+                
+        # If no snake plugin or no snakes, return
+        if not snake_plugin or not hasattr(snake_plugin, 'snakes') or not snake_plugin.snakes:
+            return
+            
+        # Debug output
+        print(f"Direct snake check found {len(snake_plugin.snakes)} snakes")
+        
+        # Find height plugin if available
+        height_plugin = None
+        for plugin in self.game.plugins:
+            if hasattr(plugin, 'get_height'):
+                height_plugin = plugin
+                break
+        
+        # Process each snake
+        for snake_idx, snake in enumerate(snake_plugin.snakes):
+            if not hasattr(snake, 'body') or len(snake.body) < 2:
+                continue
+                
+            # Create a list to store this snake's segments
+            snake_segments = []
+            
+            # Process each segment of the snake
+            for i, (sx, sy) in enumerate(snake.body):
+                # Calculate relative coordinates
+                rel_x = sx - self.game.world_x
+                rel_y = sy - self.game.world_y
+                
+                # Get height for this position (if available)
+                height = 1.0  # Default height if no height plugin
+                if height_plugin:
+                    try:
+                        height = height_plugin.get_height(sx, sy) / 10.0  # Scale height appropriately
+                    except:
+                        pass  # Use default height if there's an error
+                
+                # Ensure height is positive for visibility
+                height = max(1.0, abs(height))
+                
+                # Determine color based on segment type
+                if i == 0:
+                    color = (0.0, 1.0, 0.0, 1.0)  # Bright green for head
+                else:
+                    color = (0.0, 0.0, 1.0, 1.0)  # Bright blue for body
+                    
+                # Rattles are red
+                if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles:
+                    color = (1.0, 0.0, 0.0, 1.0)  # Bright red for rattles
+                
+                # Add to the snake segments list with explicit position
+                snake_segments.append({
+                    'position': (rel_x, height, rel_y),
+                    'color': color,
+                    'type': 'head' if i == 0 else ('rattle' if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles else 'body')
+                })
+            
+            # Add this snake's segments to the snakes list
+            if snake_segments:
+                with self.lock:
+                    # Check if this snake is already in the list
+                    snake_exists = False
+                    for existing_snake in self.snakes:
+                        if len(existing_snake) == len(snake_segments):
+                            snake_exists = True
+                            break
+                    
+                    # Only add if not already present
+                    if not snake_exists:
+                        self.snakes.append(snake_segments)
+                        print(f"Directly added snake with {len(snake_segments)} segments")
+    
     def render(self, screen):
         """Render the plugin on the curses screen.
         
@@ -167,34 +254,51 @@ class GUI3DPlugin(Plugin):
                     with self.lock:
                         self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
         
-        # Add snakes if snake plugin is active
+        # Add snakes if snake plugin is active - ENHANCED VERSION
         for plugin in self.game.plugins:
-            if hasattr(plugin, 'snakes') and plugin.active:
+            if hasattr(plugin, 'snakes') and plugin.active and len(plugin.snakes) > 0:
+                print(f"Found {len(plugin.snakes)} snakes to render")  # Debug output
+                
                 for snake_idx, snake in enumerate(plugin.snakes):
+                    if not hasattr(snake, 'body') or len(snake.body) == 0:
+                        continue
+                        
                     # Create a list to store this snake's segments
                     snake_segments = []
                     
+                    # Get height for this snake (if available)
+                    height_plugin = None
+                    for p in self.game.plugins:
+                        if hasattr(p, 'get_height'):
+                            height_plugin = p
+                            break
+                    
+                    # Process each segment of the snake
                     for i, (sx, sy) in enumerate(snake.body):
                         # Calculate relative coordinates
                         rel_x = sx - self.game.world_x
                         rel_y = sy - self.game.world_y
                         
                         # Get height for this position (if available)
-                        height = 0.0
-                        for plugin_h in self.game.plugins:
-                            if hasattr(plugin_h, 'get_height'):
-                                height = plugin_h.get_height(sx, sy) / 10.0  # Scale height appropriately
-                                break
+                        height = 0.5  # Default height if no height plugin
+                        if height_plugin:
+                            try:
+                                height = height_plugin.get_height(sx, sy) / 10.0  # Scale height appropriately
+                            except:
+                                pass  # Use default height if there's an error
+                        
+                        # Ensure height is positive for visibility
+                        height = max(0.5, abs(height))
                         
                         # Determine color based on segment type
                         if i == 0:
-                            color = (0.0, 0.8, 0.0, 1.0)  # Brighter green for head
+                            color = (0.0, 1.0, 0.0, 1.0)  # Bright green for head
                         else:
-                            color = (0.0, 0.0, 0.8, 1.0)  # Brighter blue for body
+                            color = (0.0, 0.0, 1.0, 1.0)  # Bright blue for body
                             
                         # Rattles are red
                         if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles:
-                            color = (0.9, 0.1, 0.1, 1.0)  # Brighter red for rattles
+                            color = (1.0, 0.0, 0.0, 1.0)  # Bright red for rattles
                         
                         # Create a character object for the snake segment
                         char_obj = Character3D('S', rel_x, rel_y, color, height=height)
@@ -204,7 +308,7 @@ class GUI3DPlugin(Plugin):
                             char_key = f"{rel_x},{rel_y}"
                             self.characters[char_key] = char_obj
                             
-                            # Add to the snake segments list
+                            # Add to the snake segments list with explicit position
                             snake_segments.append({
                                 'position': (rel_x, height, rel_y),
                                 'color': color,
@@ -214,6 +318,7 @@ class GUI3DPlugin(Plugin):
                     # Add this snake's segments to the snakes list
                     if snake_segments:
                         self.snakes.append(snake_segments)
+                        print(f"Added snake with {len(snake_segments)} segments")  # Debug output
     
     def get_color_for_char(self, char, x, y):
         """Get the color for a character."""
@@ -478,6 +583,7 @@ class GUI3DPlugin(Plugin):
             # Main loop
             clock = pygame.time.Clock()
             while self.running:
+                # Handle events
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
@@ -501,47 +607,9 @@ class GUI3DPlugin(Plugin):
                                 self.rotation_y += dx * 0.5
                                 self.rotation_x += dy * 0.5
                             self.last_mouse_pos = (x, y)
-            
-                # Clear the screen
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
                 
-                # Reset the modelview matrix
-                glMatrixMode(GL_MODELVIEW)
-                glLoadIdentity()
-                
-                # Apply zoom
-                glTranslatef(0, 0, self.zoom)
-                
-                # Apply rotation
-                glRotatef(self.rotation_x, 1, 0, 0)
-                glRotatef(self.rotation_y, 0, 1, 0)
-                glRotatef(self.rotation_z, 0, 0, 1)
-                
-                # Draw coordinate axes
-                if self.show_axes:
-                    self.draw_axes()
-                
-                # Draw ground plane
-                if self.show_mesh:
-                    self.draw_ground_plane()
-                
-                # Draw terrain mesh if enabled
-                if self.show_terrain_mesh:
-                    self.draw_terrain_mesh()
-                
-                # Draw vertical lines (sticks) from ground to character height
-                if self.show_sticks:
-                    self.draw_vertical_lines()
-                
-                # Draw characters
-                if self.show_letters:
-                    self.draw_characters()
-                
-                # Draw snakes as connected balls
-                self.draw_connected_snakes()
-                
-                # Update the display
-                pygame.display.flip()
+                # Render the scene using our dedicated method
+                self.render_scene()
                 
                 # Cap the frame rate
                 clock.tick(60)
@@ -552,6 +620,47 @@ class GUI3DPlugin(Plugin):
         finally:
             pygame.quit()
             
+    def render_scene(self):
+        """Render the 3D scene."""
+        # Clear the screen and depth buffer
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glClearColor(0.0, 0.0, 0.0, 1.0)
+        
+        # Set up the modelview matrix
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        
+        # Apply camera transformations
+        glTranslatef(0, 0, self.zoom)
+        glRotatef(self.rotation_x, 1, 0, 0)
+        glRotatef(self.rotation_y, 0, 1, 0)
+        glRotatef(self.rotation_z, 0, 0, 1)
+        
+        # Draw coordinate axes if enabled
+        if self.show_axes:
+            self.draw_axes()
+        
+        # Draw the ground plane
+        self.draw_ground_plane()
+        
+        # Draw vertical lines (sticks) if enabled
+        if self.show_sticks:
+            self.draw_vertical_lines()
+        
+        # Draw terrain mesh if enabled
+        if self.show_terrain_mesh:
+            self.draw_terrain_mesh()
+        
+        # Draw characters if enabled
+        if self.show_letters:
+            self.draw_characters()
+        
+        # Draw snakes as connected balls
+        self.draw_connected_snakes()
+        
+        # Update the display
+        pygame.display.flip()
+    
     def init_font_texture(self):
         """Initialize the font texture."""
         # We'll create a simple texture with ASCII characters
@@ -709,38 +818,54 @@ class GUI3DPlugin(Plugin):
         if not self.snakes:
             return
             
+        print(f"Drawing {len(self.snakes)} snakes")  # Debug output
+        
+        # Save current OpenGL state
+        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        
+        # Disable depth test temporarily to ensure snakes are visible
+        glDisable(GL_DEPTH_TEST)
+        
         # Enable lighting for better 3D appearance
         glEnable(GL_LIGHTING)
         glEnable(GL_LIGHT0)
+        
+        # Set up a stronger light for better visibility
+        glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
+        glLightfv(GL_LIGHT0, GL_AMBIENT, (0.4, 0.4, 0.4, 1))
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1))
+        glLightfv(GL_LIGHT0, GL_SPECULAR, (1.0, 1.0, 1.0, 1))
         
         # Enable blending for transparency
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
         # Draw each snake
-        for snake in self.snakes:
+        for snake_idx, snake in enumerate(self.snakes):
+            print(f"Snake {snake_idx} has {len(snake)} segments")  # Debug output
+            
             if len(snake) < 2:
                 continue  # Need at least 2 segments to draw connections
                 
             # Draw the connecting lines first (behind the balls)
             glDisable(GL_LIGHTING)  # Disable lighting for lines
             glLineWidth(5.0)  # Thicker lines for better visibility
-            glBegin(GL_LINE_STRIP)
             
+            # Draw lines with bright colors
+            glBegin(GL_LINE_STRIP)
             for segment in snake:
                 pos = segment['position']
                 color = segment['color']
-                # Make the line slightly transparent
-                glColor4f(color[0], color[1], color[2], 0.8)
+                # Make the line fully opaque
+                glColor4f(color[0], color[1], color[2], 1.0)
                 glVertex3f(pos[0], pos[1], pos[2])  # Use the correct position coordinates
-                
             glEnd()
             
             # Re-enable lighting for spheres
             glEnable(GL_LIGHTING)
             
             # Now draw the balls (spheres) for each segment
-            for segment in snake:
+            for segment_idx, segment in enumerate(snake):
                 pos = segment['position']
                 color = segment['color']
                 segment_type = segment['type']
@@ -761,9 +886,9 @@ class GUI3DPlugin(Plugin):
                 
                 # Draw a sphere with appropriate size based on segment type
                 if segment_type == 'head':
-                    radius = 0.4  # Larger head
+                    radius = 0.5  # Larger head
                 elif segment_type == 'rattle':
-                    radius = 0.35  # Medium rattles
+                    radius = 0.4  # Medium rattles
                 else:
                     radius = 0.3  # Smaller body segments
                     
@@ -778,7 +903,7 @@ class GUI3DPlugin(Plugin):
                 glPopMatrix()
                 
         # Restore OpenGL state
-        glDisable(GL_BLEND)
+        glPopAttrib()
     
     def draw_terrain_mesh(self):
         """Draw a mesh connecting the tips of the sticks to visualize the terrain surface."""
