@@ -8,6 +8,7 @@ import hashlib
 import random
 from plugins.base import Plugin
 from plugins.snake import SnakePlugin
+from plugins.graph_classifier import GraphClassifierPlugin
 
 class TextAdventure:
     def __init__(self):
@@ -91,6 +92,7 @@ class TextAdventure:
     def initialize_plugins(self):
         # Add plugins here
         self.plugins.append(SnakePlugin(self))
+        self.plugins.append(GraphClassifierPlugin(self))
         
         # Update plugin menu
         self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
@@ -361,39 +363,27 @@ class TextAdventure:
         # Reset redraw flag
         self.needs_redraw = False
 
+    def get_char_at(self, x, y):
+        """Get the character at world coordinates (x, y)"""
+        # Check if there's a space at this location
+        space_key = self.get_space_key(x, y)
+        if space_key in self.spaces:
+            return ' '
+            
+        # Calculate character based on location ID
+        location_id = (x + y * 1000) % 127
+        return chr(location_id)
+
     def render_game_world(self):
-        # Calculate player position at center of screen
-        player_screen_y = self.max_y // 2
-        player_screen_x = self.max_x // 2
-        
-        # Calculate top-left corner world coordinates
-        top_left_world_y = self.world_y - player_screen_y
-        top_left_world_x = self.world_x - player_screen_x
-        
-        # Reserve the bottom line for the panel
-        drawable_height = self.max_y - 2  # -2 to leave space for panel and avoid bottom line issues
-        
-        # Draw background relative to player position
-        for y in range(drawable_height):
-            for x in range(self.max_x - 1):  # -1 to avoid right edge issues
-                # Calculate world coordinates for this screen position
-                world_y = y - player_screen_y + self.world_y
-                world_x = x - player_screen_x + self.world_x
+        # Draw the background
+        for y in range(1, self.max_y - 2):
+            for x in range(self.max_x - 1):
+                # Calculate world coordinates
+                world_x = x - self.max_x // 2 + self.world_x
+                world_y = y - self.max_y // 2 + self.world_y
                 
-                # Check if this position has a space
-                space_key = self.get_space_key(world_x, world_y)
-                if space_key in self.spaces:
-                    # Draw a space
-                    self.screen.addch(y, x, ' ', self.background_color)
-                    continue
-                
-                # Calculate location ID and convert to ASCII
-                # Use a consistent formula for both x and y coordinates
-                loc_id = abs(world_y * 100 + world_x) % 127
-                char_code = (loc_id % 94) + 33  # 33-126 are printable ASCII
-                
-                # Get the character to draw
-                char = chr(char_code)
+                # Get character at this position
+                char = self.get_char_at(world_x, world_y)
                 
                 # Choose color based on character
                 if char == '@':
@@ -402,13 +392,13 @@ class TextAdventure:
                     color = self.zero_color
                 else:
                     color = self.background_color
-                
+                    
                 # Draw the character
                 self.screen.addch(y, x, char, color)
         
         # Draw player at center of screen
-        if 0 <= player_screen_y < drawable_height and 0 <= player_screen_x < self.max_x - 1:
-            self.screen.addch(player_screen_y, player_screen_x, self.player_char, self.player_color)
+        if 0 <= self.max_y // 2 < self.max_y - 2 and 0 <= self.max_x // 2 < self.max_x - 1:
+            self.screen.addch(self.max_y // 2, self.max_x // 2, self.player_char, self.player_color)
         
         # Render active plugins
         for plugin in self.plugins:
@@ -423,7 +413,7 @@ class TextAdventure:
         if self.message:
             panel_text = self.message
         else:
-            panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space | ESC: Menu"
+            panel_text = f"Top-Left: ({self.world_x - self.max_x // 2}, {self.world_y - self.max_y // 2}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space | ESC: Menu"
         
         # Fill panel background
         for x in range(self.max_x - 1):
