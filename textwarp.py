@@ -7,17 +7,23 @@ class TextAdventure:
     def __init__(self):
         self.screen = None
         self.running = True
-        self.player_x = 0  # Will be centered later
-        self.player_y = 0  # Will be centered later
         self.player_char = 'X'
         self.player_color = None
         self.background_color = None
+        self.at_symbol_color = None
+        self.panel_color = None
         self.max_y = 0
         self.max_x = 0
         self.last_update = time.time()
-        self.move_speed = 1.0  # Cells per second
+        self.move_speed = 5  # Integer cells per second
         self.dx = 0  # Horizontal movement direction
         self.dy = 0  # Vertical movement direction
+        # World coordinates (player is always at center of screen)
+        self.world_x = 0
+        self.world_y = 0
+        # Accumulated movement that hasn't been applied yet
+        self.acc_x = 0
+        self.acc_y = 0
 
     def setup(self):
         # Initialize curses
@@ -32,15 +38,15 @@ class TextAdventure:
         # Get screen dimensions
         self.max_y, self.max_x = self.screen.getmaxyx()
         
-        # Center the player
-        self.player_x = self.max_x // 2
-        self.player_y = self.max_y // 2
-        
         # Setup colors
-        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)  # Player color
+        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)    # Player color
         curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)  # Background color
+        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)  # @ symbol color
+        curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLUE)  # Panel color
         self.player_color = curses.color_pair(1)
         self.background_color = curses.color_pair(2)
+        self.at_symbol_color = curses.color_pair(3)
+        self.panel_color = curses.color_pair(4)
 
     def handle_input(self):
         # Reset movement direction
@@ -77,36 +83,73 @@ class TextAdventure:
         dt = current_time - self.last_update
         self.last_update = current_time
         
-        # Update player position
-        new_x = self.player_x + self.dx * self.move_speed * dt
-        new_y = self.player_y + self.dy * self.move_speed * dt
+        # Accumulate movement
+        self.acc_x += self.dx * self.move_speed * dt
+        self.acc_y += self.dy * self.move_speed * dt
         
-        # Clamp player position to screen bounds
-        new_x = max(0, min(self.max_x - 1, new_x))
-        new_y = max(0, min(self.max_y - 1, new_y))
-        
-        # Update player position
-        self.player_x = new_x
-        self.player_y = new_y
+        # Apply accumulated movement when it reaches at least 1 cell
+        if abs(self.acc_x) >= 1:
+            move_x = int(self.acc_x)
+            self.world_x += move_x
+            self.acc_x -= move_x  # Keep remainder for next update
+            
+        if abs(self.acc_y) >= 1:
+            move_y = int(self.acc_y)
+            self.world_y += move_y
+            self.acc_y -= move_y  # Keep remainder for next update
 
     def render(self):
         self.screen.clear()
         
-        # Draw background
-        for y in range(self.max_y - 1):  # -1 to avoid bottom line issues
+        # Calculate player position at center of screen
+        player_screen_y = self.max_y // 2
+        player_screen_x = self.max_x // 2
+        
+        # Calculate top-left corner world coordinates
+        top_left_world_y = self.world_y - player_screen_y
+        top_left_world_x = self.world_x - player_screen_x
+        
+        # Reserve the bottom line for the panel
+        drawable_height = self.max_y - 2  # -2 to leave space for panel and avoid bottom line issues
+        
+        # Draw background relative to player position
+        for y in range(drawable_height):
             for x in range(self.max_x - 1):  # -1 to avoid right edge issues
+                # Calculate world coordinates for this screen position
+                world_y = y - player_screen_y + self.world_y
+                world_x = x - player_screen_x + self.world_x
+                
                 # Calculate location ID and convert to ASCII
-                loc_id = (y * self.max_x + x)
+                # Use a consistent formula for both x and y coordinates
+                loc_id = abs(world_y * 100 + world_x) % 127
                 char_code = (loc_id % 94) + 33  # 33-126 are printable ASCII
                 
+                # Get the character to draw
+                char = chr(char_code)
+                
+                # Choose color based on character
+                if char == '@':
+                    color = self.at_symbol_color
+                else:
+                    color = self.background_color
+                
                 # Draw the character
-                self.screen.addch(int(y), int(x), chr(char_code), self.background_color)
+                self.screen.addch(y, x, char, color)
         
-        # Draw player (ensuring coordinates are integers)
-        player_y_int = int(self.player_y)
-        player_x_int = int(self.player_x)
-        if 0 <= player_y_int < self.max_y - 1 and 0 <= player_x_int < self.max_x - 1:
-            self.screen.addch(player_y_int, player_x_int, self.player_char, self.player_color)
+        # Draw player at center of screen
+        if 0 <= player_screen_y < drawable_height and 0 <= player_screen_x < self.max_x - 1:
+            self.screen.addch(player_screen_y, player_screen_x, self.player_char, self.player_color)
+        
+        # Draw panel at the bottom
+        panel_y = self.max_y - 2
+        panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X Position: ({self.world_x}, {self.world_y})"
+        
+        # Fill panel background
+        for x in range(self.max_x - 1):
+            self.screen.addch(panel_y, x, ' ', self.panel_color)
+        
+        # Draw panel text
+        self.screen.addstr(panel_y, 1, panel_text[:self.max_x - 3], self.panel_color)
         
         # Update screen
         self.screen.refresh()
@@ -139,4 +182,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
