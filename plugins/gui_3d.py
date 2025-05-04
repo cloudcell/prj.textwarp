@@ -5,6 +5,7 @@ import pygame
 from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
+from OpenGL.GLUT import *
 import numpy as np
 from plugins.base import Plugin
 
@@ -54,7 +55,7 @@ class GUI3DPlugin(Plugin):
         self.rotation_x = 30  # Initial rotation angles
         self.rotation_y = 0
         self.rotation_z = 0
-        self.zoom = -15
+        self.zoom = -30  # Increased initial zoom out to see more terrain
         self.last_mouse_pos = None
         self.dragging = False
         self.font_texture = None
@@ -72,6 +73,8 @@ class GUI3DPlugin(Plugin):
         self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
         self.stick_dot_size = 8.0  # Size of dots at the end of sticks
         self.show_snake_connections = True  # New option to show snakes as connected balls
+        self.render_distance = 100  # New option to control how far to render
+        self.show_axes = True  # New option to show or hide the 3D axes
         
         # Load settings if they exist
         self.load_settings()
@@ -151,6 +154,19 @@ class GUI3DPlugin(Plugin):
                 with self.lock:
                     self.characters[(rel_x, rel_y)] = Character3D(char, rel_x, rel_y, color)
         
+        # Add player character at center (0,0)
+        with self.lock:
+            self.characters[(0, 0)] = Character3D('X', 0, 0, (1.0, 0.0, 0.0, 1.0))
+            
+        # Add remote players if network plugin is active
+        for plugin in self.game.plugins:
+            if hasattr(plugin, 'remote_players') and plugin.active:
+                for player_id, player in plugin.remote_players.items():
+                    rel_x = player.x - self.game.world_x
+                    rel_y = player.y - self.game.world_y
+                    with self.lock:
+                        self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
+        
         # Add snakes if snake plugin is active
         for plugin in self.game.plugins:
             if hasattr(plugin, 'snakes') and plugin.active:
@@ -163,18 +179,25 @@ class GUI3DPlugin(Plugin):
                         rel_x = sx - self.game.world_x
                         rel_y = sy - self.game.world_y
                         
+                        # Get height for this position (if available)
+                        height = 0.0
+                        for plugin_h in self.game.plugins:
+                            if hasattr(plugin_h, 'get_height'):
+                                height = plugin_h.get_height(sx, sy) / 10.0  # Scale height appropriately
+                                break
+                        
                         # Determine color based on segment type
                         if i == 0:
-                            color = (0.0, 0.6, 0.0, 1.0)  # Green for head
+                            color = (0.0, 0.8, 0.0, 1.0)  # Brighter green for head
                         else:
-                            color = (0.0, 0.0, 0.6, 1.0)  # Lighter blue for body
+                            color = (0.0, 0.0, 0.8, 1.0)  # Brighter blue for body
                             
                         # Rattles are red
-                        if i >= len(snake.body) - snake.rattles:
-                            color = (0.8, 0.0, 0.0, 1.0)  # Red for rattles
+                        if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles:
+                            color = (0.9, 0.1, 0.1, 1.0)  # Brighter red for rattles
                         
                         # Create a character object for the snake segment
-                        char_obj = Character3D('S', rel_x, rel_y, color)
+                        char_obj = Character3D('S', rel_x, rel_y, color, height=height)
                         
                         # Add to the characters dictionary
                         with self.lock:
@@ -183,29 +206,15 @@ class GUI3DPlugin(Plugin):
                             
                             # Add to the snake segments list
                             snake_segments.append({
-                                'position': (rel_x, rel_y, char_obj.height),
+                                'position': (rel_x, height, rel_y),
                                 'color': color,
-                                'type': 'head' if i == 0 else ('rattle' if i >= len(snake.body) - snake.rattles else 'body')
+                                'type': 'head' if i == 0 else ('rattle' if hasattr(snake, 'rattles') and i >= len(snake.body) - snake.rattles else 'body')
                             })
                     
                     # Add this snake's segments to the snakes list
                     if snake_segments:
                         self.snakes.append(snake_segments)
-        
-        # Add player character at center (0,0)
-        with self.lock:
-            self.characters[(0, 0)] = Character3D('X', 0, 0, (1.0, 0.0, 0.0, 1.0))
-        
-        # Add remote players if networking is active
-        for plugin in self.game.plugins:
-            if hasattr(plugin, 'players') and plugin.active:
-                for player in plugin.players.values():
-                    # Convert to relative coordinates
-                    rel_x = player.x - self.game.world_x
-                    rel_y = player.y - self.game.world_y
-                    with self.lock:
-                        self.characters[(rel_x, rel_y)] = Character3D('O', rel_x, rel_y, (0.0, 1.0, 0.0, 1.0))
-                    
+    
     def get_color_for_char(self, char, x, y):
         """Get the color for a character."""
         if char == 'X':  # Player
@@ -431,8 +440,15 @@ class GUI3DPlugin(Plugin):
     def run_gui(self):
         """Run the GUI in a separate thread."""
         try:
-            # Initialize Pygame
+            # Initialize pygame
             pygame.init()
+            
+            # Initialize GLUT for text rendering
+            try:
+                glutInit()
+            except:
+                # GLUT might not be available, so we'll provide a fallback
+                self.draw_text = self.draw_text_fallback
             
             # Create a window
             display = (800, 600)
@@ -441,12 +457,20 @@ class GUI3DPlugin(Plugin):
             
             # Set up the OpenGL environment
             glEnable(GL_DEPTH_TEST)
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glEnable(GL_LIGHTING)
+            glEnable(GL_LIGHT0)
+            glEnable(GL_COLOR_MATERIAL)
+            glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
             
-            # Set up the perspective
+            # Set up the light
+            glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
+            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1))
+            glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.8, 0.8, 0.8, 1))
+            
+            # Set up the projection matrix with a wider field of view and greater depth range
             glMatrixMode(GL_PROJECTION)
-            gluPerspective(45, (display[0] / display[1]), 0.1, 50.0)
+            glLoadIdentity()
+            gluPerspective(60, (800/600), 0.1, 200.0)  # Increased FOV and far clipping plane
             
             # Initialize font texture
             self.init_font_texture()
@@ -461,20 +485,23 @@ class GUI3DPlugin(Plugin):
                         if event.button == 1:  # Left mouse button
                             self.dragging = True
                             self.last_mouse_pos = pygame.mouse.get_pos()
+                        elif event.button == 4:  # Scroll up
+                            self.zoom += 1.0  # Increased zoom step for larger distances
+                        elif event.button == 5:  # Scroll down
+                            self.zoom -= 1.0  # Increased zoom step for larger distances
                     elif event.type == pygame.MOUSEBUTTONUP:
                         if event.button == 1:  # Left mouse button
                             self.dragging = False
                     elif event.type == pygame.MOUSEMOTION:
-                        if self.dragging and self.last_mouse_pos:
+                        if self.dragging:
                             x, y = pygame.mouse.get_pos()
-                            dx = x - self.last_mouse_pos[0]
-                            dy = y - self.last_mouse_pos[1]
-                            self.rotation_y += dx * 0.5
-                            self.rotation_x += dy * 0.5
+                            if self.last_mouse_pos:
+                                dx = x - self.last_mouse_pos[0]
+                                dy = y - self.last_mouse_pos[1]
+                                self.rotation_y += dx * 0.5
+                                self.rotation_x += dy * 0.5
                             self.last_mouse_pos = (x, y)
-                    elif event.type == pygame.MOUSEWHEEL:
-                        self.zoom += event.y
-                        
+            
                 # Clear the screen
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
                 
@@ -491,7 +518,8 @@ class GUI3DPlugin(Plugin):
                 glRotatef(self.rotation_z, 0, 0, 1)
                 
                 # Draw coordinate axes
-                self.draw_axes()
+                if self.show_axes:
+                    self.draw_axes()
                 
                 # Draw ground plane
                 if self.show_mesh:
@@ -509,9 +537,8 @@ class GUI3DPlugin(Plugin):
                 if self.show_letters:
                     self.draw_characters()
                 
-                # Draw snakes as connected balls if enabled
-                if self.show_snake_connections:
-                    self.draw_connected_snakes()
+                # Draw snakes as connected balls
+                self.draw_connected_snakes()
                 
                 # Update the display
                 pygame.display.flip()
@@ -567,57 +594,49 @@ class GUI3DPlugin(Plugin):
             characters_copy = dict(self.characters)
         
         # Draw vertical lines from ground to character height
+        glLineWidth(1.0)
+        
+        # Extend the rendering distance
+        render_range = self.render_distance // 2
+        
+        # Draw all vertical lines first
         glBegin(GL_LINES)
         for char_key, char_obj in characters_copy.items():
-            # Get color based on height and selected color scheme
-            rgb = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
-            
-            # Set color for the line
-            glColor3f(*rgb)
+            # Skip if the character is too far away
+            if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                continue
+                
+            # Set color based on height and color scheme
+            color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+            glColor3f(*color)
             
             # Draw line from ground to character height
-            glVertex3f(char_obj.x, 0, char_obj.y)  # Ground point
-            glVertex3f(char_obj.x, char_obj.height, char_obj.y)  # Character height point
-        
+            glVertex3f(char_obj.x, 0, char_obj.y)
+            glVertex3f(char_obj.x, char_obj.height, char_obj.y)
         glEnd()
         
-        # Draw 3D dots at the end of each stick
-        for char_key, char_obj in characters_copy.items():
-            # Get color based on height and selected color scheme
-            rgb = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+        # Now draw dots at the end of each stick if enabled
+        if self.stick_dot_size > 0:
+            # Enable point sprites for better dots
+            glEnable(GL_POINT_SMOOTH)
+            glPointSize(self.stick_dot_size)
             
-            # Calculate dot size (half the width/height of the square)
-            dot_size = self.stick_dot_size / 20.0  # Scale down to appropriate size
-            
-            # Save current matrix
-            glPushMatrix()
-            
-            # Position at the top of the stick
-            glTranslatef(char_obj.x, char_obj.height, char_obj.y)
-            
-            # Always face the camera (billboarding)
-            modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-            
-            # Extract the rotation from the modelview matrix
-            camera_right = [modelview[0][0], modelview[1][0], modelview[2][0]]
-            camera_up = [modelview[0][1], modelview[1][1], modelview[2][1]]
-            
-            # Set color for the dot
-            glColor3f(*rgb)
-            
-            # Draw a small quad at the top of the stick
-            glBegin(GL_QUADS)
-            glVertex3f(-dot_size, -dot_size, 0)
-            glVertex3f(dot_size, -dot_size, 0)
-            glVertex3f(dot_size, dot_size, 0)
-            glVertex3f(-dot_size, dot_size, 0)
+            glBegin(GL_POINTS)
+            for char_key, char_obj in characters_copy.items():
+                # Skip if the character is too far away
+                if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                    continue
+                    
+                # Set color based on height and color scheme
+                color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+                glColor3f(*color)
+                
+                # Draw dot at the top of the line
+                glVertex3f(char_obj.x, char_obj.height, char_obj.y)
             glEnd()
             
-            # Restore matrix
-            glPopMatrix()
-        
-        # Re-enable texturing
-        glEnable(GL_TEXTURE_2D)
+            # Disable point sprites
+            glDisable(GL_POINT_SMOOTH)
     
     def draw_characters(self):
         """Draw all characters in the 3D world."""
@@ -687,9 +706,13 @@ class GUI3DPlugin(Plugin):
         
     def draw_connected_snakes(self):
         """Draw snakes as balls connected by lines."""
-        if not self.show_snake_connections or not self.snakes:
+        if not self.snakes:
             return
             
+        # Enable lighting for better 3D appearance
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        
         # Enable blending for transparency
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -700,17 +723,21 @@ class GUI3DPlugin(Plugin):
                 continue  # Need at least 2 segments to draw connections
                 
             # Draw the connecting lines first (behind the balls)
-            glLineWidth(3.0)  # Thicker lines
+            glDisable(GL_LIGHTING)  # Disable lighting for lines
+            glLineWidth(5.0)  # Thicker lines for better visibility
             glBegin(GL_LINE_STRIP)
             
             for segment in snake:
                 pos = segment['position']
                 color = segment['color']
                 # Make the line slightly transparent
-                glColor4f(color[0], color[1], color[2], 0.7)
-                glVertex3f(pos[0], pos[2], pos[1])  # Note: Y is up in OpenGL
+                glColor4f(color[0], color[1], color[2], 0.8)
+                glVertex3f(pos[0], pos[1], pos[2])  # Use the correct position coordinates
                 
             glEnd()
+            
+            # Re-enable lighting for spheres
+            glEnable(GL_LIGHTING)
             
             # Now draw the balls (spheres) for each segment
             for segment in snake:
@@ -722,29 +749,35 @@ class GUI3DPlugin(Plugin):
                 glPushMatrix()
                 
                 # Position the sphere
-                glTranslatef(pos[0], pos[2], pos[1])  # Note: Y is up in OpenGL
+                glTranslatef(pos[0], pos[1], pos[2])  # Use the correct position coordinates
+                
+                # Set material properties for better lighting
+                glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, (color[0], color[1], color[2], 1.0))
+                glMaterialfv(GL_FRONT, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
+                glMaterialf(GL_FRONT, GL_SHININESS, 100.0)
                 
                 # Set color
                 glColor4f(color[0], color[1], color[2], 1.0)
                 
                 # Draw a sphere with appropriate size based on segment type
                 if segment_type == 'head':
-                    radius = 0.3  # Larger head
+                    radius = 0.4  # Larger head
                 elif segment_type == 'rattle':
-                    radius = 0.25  # Medium rattles
+                    radius = 0.35  # Medium rattles
                 else:
-                    radius = 0.2  # Smaller body segments
+                    radius = 0.3  # Smaller body segments
                     
-                # Create a sphere quadric object
+                # Create a sphere quadric object with higher quality
                 quadric = gluNewQuadric()
                 gluQuadricDrawStyle(quadric, GLU_FILL)
                 gluQuadricNormals(quadric, GLU_SMOOTH)
-                gluSphere(quadric, radius, 16, 16)  # Draw the sphere
+                gluQuadricTexture(quadric, GL_TRUE)
+                gluSphere(quadric, radius, 24, 24)  # Higher resolution spheres
                 gluDeleteQuadric(quadric)
                 
                 glPopMatrix()
                 
-        # Disable blending
+        # Restore OpenGL state
         glDisable(GL_BLEND)
     
     def draw_terrain_mesh(self):
@@ -752,214 +785,156 @@ class GUI3DPlugin(Plugin):
         # Disable texturing
         glDisable(GL_TEXTURE_2D)
         
-        # Make a copy of the characters dictionary to avoid modification during iteration
+        # Enable blending for transparency
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Get all character positions and heights
+        positions = {}
         with self.lock:
-            characters_copy = dict(self.characters)
+            for key, char_obj in self.characters.items():
+                if isinstance(key, tuple):
+                    x, y = key
+                else:
+                    # Parse the key if it's a string (format: "x,y")
+                    try:
+                        x, y = map(int, key.split(','))
+                    except:
+                        continue
+                
+                positions[(x, y)] = char_obj.height
         
-        # Create a grid of points for the terrain mesh
-        grid_size = 50  # Same as ground plane grid size
-        grid_points = {}
-        
-        # First, collect all character positions and heights
-        for char_key, char_obj in characters_copy.items():
-            # Convert to grid coordinates (rounded to nearest integer)
-            grid_x = round(char_obj.x)
-            grid_z = round(char_obj.y)  # y in world is z in OpenGL
+        # If we have no positions, return
+        if not positions:
+            return
             
-            # Store the height at this grid point
-            grid_key = f"{grid_x},{grid_z}"
-            grid_points[grid_key] = char_obj.height
+        # Determine the bounds of the terrain
+        min_x = min(x for x, _ in positions.keys())
+        max_x = max(x for x, _ in positions.keys())
+        min_y = min(y for _, y in positions.keys())
+        max_y = max(y for _, y in positions.keys())
         
-        # Set rendering mode based on style
-        if self.terrain_mesh_style == "wireframe":
-            # Draw wireframe (lines only)
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-            # Make lines thicker for better visibility
-            glLineWidth(2.0)
-        else:
-            # Draw filled triangles (default)
+        # Expand the bounds to ensure we render a larger area
+        min_x = min(min_x, -self.render_distance // 2)
+        max_x = max(max_x, self.render_distance // 2)
+        min_y = min(min_y, -self.render_distance // 2)
+        max_y = max(max_y, self.render_distance // 2)
+        
+        # Set the mesh color based on style
+        if self.terrain_mesh_style == "filled":
+            # For filled style, use a semi-transparent color
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            
-            # Enable blending for transparency
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        else:
+            # For wireframe style, use lines
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
         
-        # Draw triangles to connect adjacent grid points
-        glBegin(GL_TRIANGLES)
-        
-        # Iterate through the grid
-        for x in range(-grid_size, grid_size):
-            for z in range(-grid_size, grid_size):
+        # Draw triangles connecting the points
+        for x in range(min_x, max_x):
+            for y in range(min_y, max_y):
                 # Check if we have all four corners of a grid cell
                 corners = [
-                    (x, z),       # Bottom-left
-                    (x+1, z),     # Bottom-right
-                    (x, z+1),     # Top-left
-                    (x+1, z+1)    # Top-right
+                    (x, y),
+                    (x+1, y),
+                    (x, y+1),
+                    (x+1, y+1)
                 ]
                 
-                # Get heights for each corner
-                heights = []
-                corner_positions = []
-                for cx, cz in corners:
-                    grid_key = f"{cx},{cz}"
-                    if grid_key in grid_points:
-                        # Use the actual height from the character
-                        heights.append(grid_points[grid_key])
-                    else:
-                        # Use interpolated height or zero if no data
-                        # Try to interpolate from neighboring points
-                        neighbor_heights = []
-                        for dx in [-1, 0, 1]:
-                            for dz in [-1, 0, 1]:
-                                if dx == 0 and dz == 0:
-                                    continue
-                                neighbor_key = f"{cx+dx},{cz+dz}"
-                                if neighbor_key in grid_points:
-                                    neighbor_heights.append(grid_points[neighbor_key])
-                        
-                        if neighbor_heights:
-                            # Use average of neighboring heights
-                            heights.append(sum(neighbor_heights) / len(neighbor_heights))
-                        else:
-                            # No neighbors, use zero
-                            heights.append(0)
-                    
-                    corner_positions.append((cx, cz))
+                # Count how many corners we have
+                valid_corners = [c for c in corners if c in positions]
                 
-                # Only draw triangles if we have valid heights for all corners
-                if len(heights) == 4:
-                    # Calculate the midpoint position and height (average of the four corners)
-                    mid_x = (corners[0][0] + corners[1][0] + corners[2][0] + corners[3][0]) / 4
-                    mid_z = (corners[0][1] + corners[1][1] + corners[2][1] + corners[3][1]) / 4
-                    mid_height = sum(heights) / 4
+                # Skip if we don't have enough corners to form triangles
+                if len(valid_corners) < 3:
+                    continue
+                
+                # Calculate the midpoint if we have all four corners
+                if len(valid_corners) == 4:
+                    # Calculate the midpoint height as the average of the four corners
+                    mid_height = sum(positions[c] for c in valid_corners) / 4
                     
-                    # Calculate colors for all points including the midpoint
-                    colors = []
-                    for h in heights + [mid_height]:  # Add midpoint height
-                        # Get RGB color based on height and color scheme
-                        rgb = self.get_color_from_scheme(h, self.terrain_color_scheme)
-                        
-                        # Adjust alpha for wireframe mode
-                        if self.terrain_mesh_style == "wireframe":
-                            colors.append((*rgb, 1.0))  # Solid lines
-                        else:
-                            colors.append((*rgb, self.terrain_mesh_opacity))  # User-controlled transparency
+                    # Draw four triangles from the corners to the midpoint
+                    glBegin(GL_TRIANGLES)
                     
-                    # Draw four triangles connecting each corner to the midpoint
-                    if self.terrain_mesh_style == "filled":
-                        # Use RGBA for filled mode with transparency
-                        # Triangle 1: Bottom-left to midpoint to Bottom-right
-                        glColor4f(*colors[0])
-                        glVertex3f(corners[0][0], heights[0], corners[0][1])
+                    # For each corner, draw a triangle to the midpoint
+                    for i, corner in enumerate(corners):
+                        next_corner = corners[(i + 1) % 4]
                         
-                        glColor4f(*colors[4])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
+                        # Get corner positions and heights
+                        cx, cy = corner
+                        corner_height = positions.get(corner, 0)
                         
-                        glColor4f(*colors[1])
-                        glVertex3f(corners[1][0], heights[1], corners[1][1])
+                        # Get next corner
+                        nx, ny = next_corner
+                        next_height = positions.get(next_corner, 0)
                         
-                        # Triangle 2: Bottom-right to midpoint to Top-right
-                        glColor4f(*colors[1])
-                        glVertex3f(corners[1][0], heights[1], corners[1][1])
+                        # Calculate midpoint position
+                        mid_x = (min_x + max_x) / 2
+                        mid_y = (min_y + max_y) / 2
                         
-                        glColor4f(*colors[4])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
+                        # Set colors based on heights and color scheme
+                        corner_color = self.get_color_from_scheme(corner_height, self.terrain_color_scheme)
+                        next_color = self.get_color_from_scheme(next_height, self.terrain_color_scheme)
+                        mid_color = self.get_color_from_scheme(mid_height, self.terrain_color_scheme)
                         
-                        glColor4f(*colors[3])
-                        glVertex3f(corners[3][0], heights[3], corners[3][1])
+                        # Add alpha for transparency
+                        corner_color = (*corner_color, self.terrain_mesh_opacity)
+                        next_color = (*next_color, self.terrain_mesh_opacity)
+                        mid_color = (*mid_color, self.terrain_mesh_opacity)
                         
-                        # Triangle 3: Top-right to midpoint to Top-left
-                        glColor4f(*colors[3])
-                        glVertex3f(corners[3][0], heights[3], corners[3][1])
+                        # Draw the triangle
+                        glColor4f(*corner_color)
+                        glVertex3f(cx, corner_height, cy)
                         
-                        glColor4f(*colors[4])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
+                        glColor4f(*next_color)
+                        glVertex3f(nx, next_height, ny)
                         
-                        glColor4f(*colors[2])
-                        glVertex3f(corners[2][0], heights[2], corners[2][1])
+                        glColor4f(*mid_color)
+                        glVertex3f((cx + nx) / 2, mid_height, (cy + ny) / 2)
+                    
+                    glEnd()
+                else:
+                    # Draw a single triangle with the corners we have
+                    glBegin(GL_TRIANGLES)
+                    
+                    for corner in valid_corners:
+                        cx, cy = corner
+                        corner_height = positions.get(corner, 0)
+                        corner_color = self.get_color_from_scheme(corner_height, self.terrain_color_scheme)
+                        corner_color = (*corner_color, self.terrain_mesh_opacity)
                         
-                        # Triangle 4: Top-left to midpoint to Bottom-left
-                        glColor4f(*colors[2])
-                        glVertex3f(corners[2][0], heights[2], corners[2][1])
-                        
-                        glColor4f(*colors[4])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
-                        
-                        glColor4f(*colors[0])
-                        glVertex3f(corners[0][0], heights[0], corners[0][1])
-                    else:
-                        # Use RGB for wireframe mode (no transparency)
-                        # Triangle 1: Bottom-left to midpoint to Bottom-right
-                        glColor3f(*colors[0][:3])
-                        glVertex3f(corners[0][0], heights[0], corners[0][1])
-                        
-                        glColor3f(*colors[4][:3])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
-                        
-                        glColor3f(*colors[1][:3])
-                        glVertex3f(corners[1][0], heights[1], corners[1][1])
-                        
-                        # Triangle 2: Bottom-right to midpoint to Top-right
-                        glColor3f(*colors[1][:3])
-                        glVertex3f(corners[1][0], heights[1], corners[1][1])
-                        
-                        glColor3f(*colors[4][:3])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
-                        
-                        glColor3f(*colors[3][:3])
-                        glVertex3f(corners[3][0], heights[3], corners[3][1])
-                        
-                        # Triangle 3: Top-right to midpoint to Top-left
-                        glColor3f(*colors[3][:3])
-                        glVertex3f(corners[3][0], heights[3], corners[3][1])
-                        
-                        glColor3f(*colors[4][:3])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
-                        
-                        glColor3f(*colors[2][:3])
-                        glVertex3f(corners[2][0], heights[2], corners[2][1])
-                        
-                        # Triangle 4: Top-left to midpoint to Bottom-left
-                        glColor3f(*colors[2][:3])
-                        glVertex3f(corners[2][0], heights[2], corners[2][1])
-                        
-                        glColor3f(*colors[4][:3])  # Midpoint color
-                        glVertex3f(mid_x, mid_height, mid_z)
-                        
-                        glColor3f(*colors[0][:3])
-                        glVertex3f(corners[0][0], heights[0], corners[0][1])
+                        glColor4f(*corner_color)
+                        glVertex3f(cx, corner_height, cy)
+                    
+                    glEnd()
         
-        glEnd()
-        
-        # Reset polygon mode to filled for other rendering
+        # Reset polygon mode
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-        # Reset line width
-        glLineWidth(1.0)
+        
         # Disable blending
         glDisable(GL_BLEND)
     
     def draw_ground_plane(self):
         """Draw the ground plane."""
-        # Draw a grid on the ground plane
-        glDisable(GL_TEXTURE_2D)
-        glBegin(GL_LINES)
-        
-        # Set grid color (dark gray)
+        # Draw a larger grid for the ground plane
+        glDisable(GL_LIGHTING)
         glColor3f(0.2, 0.2, 0.2)
         
-        # Draw grid lines
-        grid_size = 50
-        for i in range(-grid_size, grid_size + 1, 1):
-            # X axis lines
+        # Draw a grid extending further
+        grid_size = 50  # Increased from 10
+        grid_step = 5   # Draw lines every 5 units for less clutter
+        
+        glBegin(GL_LINES)
+        for i in range(-grid_size, grid_size + 1, grid_step):
+            # Draw lines along X axis
             glVertex3f(i, 0, -grid_size)
             glVertex3f(i, 0, grid_size)
             
-            # Z axis lines
+            # Draw lines along Z axis
             glVertex3f(-grid_size, 0, i)
             glVertex3f(grid_size, 0, i)
-        
         glEnd()
+        
+        # Re-enable lighting
+        glEnable(GL_LIGHTING)
         
         # Draw coordinate axes for better orientation
         glBegin(GL_LINES)
@@ -995,26 +970,74 @@ class GUI3DPlugin(Plugin):
         
     def draw_axes(self):
         """Draw coordinate axes for better orientation."""
-        glDisable(GL_TEXTURE_2D)
+        # Disable lighting for clearer axes
+        glDisable(GL_LIGHTING)
+        
+        # Set line width for better visibility
+        glLineWidth(3.0)
+        
+        # Draw the axes with distinct colors
         glBegin(GL_LINES)
         
-        # X-axis (red)
+        # X axis - Red
         glColor3f(1.0, 0.0, 0.0)
         glVertex3f(0, 0, 0)
         glVertex3f(10, 0, 0)
         
-        # Y-axis (green)
+        # Y axis - Green
         glColor3f(0.0, 1.0, 0.0)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 10, 0)
         
-        # Z-axis (blue)
+        # Z axis - Blue
         glColor3f(0.0, 0.0, 1.0)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 0, 10)
         
         glEnd()
-        glEnable(GL_TEXTURE_2D)
+        
+        # Draw axis labels
+        # X axis label
+        glPushMatrix()
+        glTranslatef(11, 0, 0)
+        glColor3f(1.0, 0.0, 0.0)
+        glRasterPos3f(0, 0, 0)
+        self.draw_text("X")
+        glPopMatrix()
+        
+        # Y axis label
+        glPushMatrix()
+        glTranslatef(0, 11, 0)
+        glColor3f(0.0, 1.0, 0.0)
+        glRasterPos3f(0, 0, 0)
+        self.draw_text("Y")
+        glPopMatrix()
+        
+        # Z axis label
+        glPushMatrix()
+        glTranslatef(0, 0, 11)
+        glColor3f(0.0, 0.0, 1.0)
+        glRasterPos3f(0, 0, 0)
+        self.draw_text("Z")
+        glPopMatrix()
+        
+        # Reset line width
+        glLineWidth(1.0)
+        
+        # Re-enable lighting
+        glEnable(GL_LIGHTING)
+    
+    def draw_text(self, text):
+        """Draw text at the current raster position."""
+        for c in text:
+            glutBitmapCharacter(GLUT_BITMAP_9_BY_15, ord(c))
+    
+    def draw_text_fallback(self, text):
+        """Fallback for drawing text if GLUT is not available."""
+        # This is a very basic fallback and may not work correctly
+        # It's recommended to use GLUT for proper text rendering
+        for c in text:
+            print(c, end='', flush=True)
     
     def draw_cube(self, size):
         """Draw a simple cube."""
@@ -1064,6 +1087,8 @@ class GUI3DPlugin(Plugin):
                 self.terrain_color_scheme = settings.get("terrain_color_scheme", "height")
                 self.stick_dot_size = settings.get("stick_dot_size", 8.0)
                 self.show_snake_connections = settings.get("show_snake_connections", True)
+                self.render_distance = settings.get("render_distance", 100)
+                self.show_axes = settings.get("show_axes", True)
         except:
             # Use default settings if file doesn't exist or is invalid
             pass
@@ -1082,7 +1107,9 @@ class GUI3DPlugin(Plugin):
                     "terrain_mesh_opacity": self.terrain_mesh_opacity,
                     "terrain_color_scheme": self.terrain_color_scheme,
                     "stick_dot_size": self.stick_dot_size,
-                    "show_snake_connections": self.show_snake_connections
+                    "show_snake_connections": self.show_snake_connections,
+                    "render_distance": self.render_distance,
+                    "show_axes": self.show_axes
                 }
                 json.dump(settings, f)
         except:
@@ -1101,6 +1128,8 @@ class GUI3DPlugin(Plugin):
         original_terrain_color_scheme = self.terrain_color_scheme
         original_stick_dot_size = self.stick_dot_size
         original_show_snake_connections = self.show_snake_connections
+        original_render_distance = self.render_distance
+        original_show_axes = self.show_axes
         
         # Variables for menu navigation
         current_selection = 0
@@ -1116,7 +1145,9 @@ class GUI3DPlugin(Plugin):
             {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float"},
             {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"},
             {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float"},
-            {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"}
+            {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"},
+            {"name": "Render Distance", "value": self.render_distance, "type": "int"},
+            {"name": "Show Axes", "value": self.show_axes, "type": "bool"}
         ]
         
         # Get curses module from the game
@@ -1147,6 +1178,8 @@ class GUI3DPlugin(Plugin):
                     value_display = "ON" if setting["value"] else "OFF"
                 elif setting["type"] == "float":
                     value_display = f"{setting['value']:.1f}"
+                elif setting["type"] == "int":
+                    value_display = f"{setting['value']}"
                 else:
                     value_display = setting["value"]
                     
@@ -1197,6 +1230,12 @@ class GUI3DPlugin(Plugin):
                         settings[current_selection]["value"] += 0.1
                     else:
                         settings[current_selection]["value"] = 0.0
+                elif settings[current_selection]["type"] == "int":
+                    # Adjust render distance value
+                    if settings[current_selection]["value"] < 1000:
+                        settings[current_selection]["value"] += 10
+                    else:
+                        settings[current_selection]["value"] = 100
             elif key == ord('r') or key == ord('R'):
                 # Reset to defaults
                 for setting in settings:
@@ -1208,6 +1247,8 @@ class GUI3DPlugin(Plugin):
                         setting["value"] = "height"
                     elif setting["type"] == "float":
                         setting["value"] = 8.0 if setting["name"] == "Stick Dot Size" else 0.7
+                    elif setting["type"] == "int":
+                        setting["value"] = 100
             elif key == 10:  # Enter key
                 # Apply changes
                 self.show_letters = settings[0]["value"]
@@ -1219,6 +1260,8 @@ class GUI3DPlugin(Plugin):
                 self.terrain_color_scheme = settings[6]["value"]
                 self.stick_dot_size = settings[7]["value"]
                 self.show_snake_connections = settings[8]["value"]
+                self.render_distance = settings[9]["value"]
+                self.show_axes = settings[10]["value"]
                 
                 # Save settings
                 self.save_settings()
@@ -1236,6 +1279,8 @@ class GUI3DPlugin(Plugin):
                 self.terrain_color_scheme = original_terrain_color_scheme
                 self.stick_dot_size = original_stick_dot_size
                 self.show_snake_connections = original_show_snake_connections
+                self.render_distance = original_render_distance
+                self.show_axes = original_show_axes
                 
                 # Exit without saving
                 in_settings_menu = False
