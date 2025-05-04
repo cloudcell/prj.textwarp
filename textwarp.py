@@ -2,6 +2,9 @@
 import curses
 import time
 import math
+import os
+import json
+import hashlib
 
 class TextAdventure:
     def __init__(self):
@@ -61,6 +64,11 @@ class TextAdventure:
             ord('2'): (0, 1),    # S
             ord('3'): (1, 1)     # SE
         }
+        # Store spaces created by the user
+        self.spaces = self.load_spaces()
+        # Message to display
+        self.message = ""
+        self.message_timeout = 0
 
     def setup(self):
         # Initialize curses
@@ -106,6 +114,17 @@ class TextAdventure:
         # Reset movement direction
         self.dx = 0
         self.dy = 0
+        
+        # Handle space key to create a space at current position
+        if key == ord(' '):
+            # Create a space at the current world position
+            space_key = self.get_space_key(self.world_x, self.world_y)
+            self.spaces[space_key] = True
+            self.save_spaces()
+            self.needs_redraw = True
+            self.message = f"Space created at ({self.world_x}, {self.world_y})"
+            self.message_timeout = time.time() + 2  # Show message for 2 seconds
+            return
         
         # Check for numpad input first (takes precedence)
         if key in self.numpad_directions:
@@ -170,6 +189,12 @@ class TextAdventure:
         dt = current_time - self.last_update
         self.last_update = current_time
         
+        # Check if message timeout has expired
+        if self.message_timeout > 0 and current_time > self.message_timeout:
+            self.message = ""
+            self.message_timeout = 0
+            self.needs_redraw = True
+        
         # Simulate key release after a short time
         # This allows for diagonal movement by pressing keys in sequence
         for key in self.key_states:
@@ -218,6 +243,13 @@ class TextAdventure:
                 world_y = y - player_screen_y + self.world_y
                 world_x = x - player_screen_x + self.world_x
                 
+                # Check if this position has a space
+                space_key = self.get_space_key(world_x, world_y)
+                if space_key in self.spaces:
+                    # Draw a space
+                    self.screen.addch(y, x, ' ', self.background_color)
+                    continue
+                
                 # Calculate location ID and convert to ASCII
                 # Use a consistent formula for both x and y coordinates
                 loc_id = abs(world_y * 100 + world_x) % 127
@@ -244,7 +276,12 @@ class TextAdventure:
         # Draw panel at the bottom
         panel_y = self.max_y - 2
         direction = getattr(self, 'direction', '')
-        panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Key: {self.last_key}"
+        
+        # Determine panel text based on whether there's a message
+        if self.message:
+            panel_text = self.message
+        else:
+            panel_text = f"Top-Left: ({top_left_world_x}, {top_left_world_y}) | X: ({self.world_x}, {self.world_y}) | Dir: {direction} | Space: Create space"
         
         # Fill panel background
         for x in range(self.max_x - 1):
@@ -265,6 +302,32 @@ class TextAdventure:
         self.screen.keypad(False)
         curses.echo()
         curses.endwin()
+
+    def get_space_key(self, x, y):
+        """Generate a hash key for a space at coordinates (x, y)"""
+        # Create a string representation of the coordinates
+        coord_str = f"{x},{y}"
+        # Hash the coordinates to create a unique key
+        return hashlib.md5(coord_str.encode()).hexdigest()
+
+    def load_spaces(self):
+        """Load spaces from file"""
+        spaces = {}
+        try:
+            if os.path.exists('spaces.json'):
+                with open('spaces.json', 'r') as f:
+                    spaces = json.load(f)
+        except Exception as e:
+            print(f"Error loading spaces: {e}")
+        return spaces
+
+    def save_spaces(self):
+        """Save spaces to file"""
+        try:
+            with open('spaces.json', 'w') as f:
+                json.dump(self.spaces, f)
+        except Exception as e:
+            print(f"Error saving spaces: {e}")
 
     def run(self):
         try:
