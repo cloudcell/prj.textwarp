@@ -16,8 +16,14 @@ import copy
 
 class TextAdventure:
     def __init__(self):
+        """Initialize the game."""
+        # Initialize variables
         self.screen = None
         self.running = True
+        self.world_x = 0
+        self.world_y = 0
+        self.dx = 0
+        self.dy = 0
         self.player_char = 'X'
         self.player_color = None
         self.background_color = None
@@ -34,11 +40,7 @@ class TextAdventure:
         self.max_x = 0
         self.last_update = time.time()
         self.move_speed = 5  # Integer cells per second
-        self.dx = 0  # Horizontal movement direction
-        self.dy = 0  # Vertical movement direction
         # World coordinates (player is always at center of screen)
-        self.world_x = 0
-        self.world_y = 0
         # Accumulated movement that hasn't been applied yet
         self.acc_x = 0
         self.acc_y = 0
@@ -113,6 +115,12 @@ class TextAdventure:
         self.plugins = []
         self.initialize_plugins()
         self.load_plugin_config()
+
+        # Character cache to improve performance
+        self.char_cache = {}
+        self.last_player_x = 0
+        self.last_player_y = 0
+        self.cache_valid = False
 
     def initialize_plugins(self):
         # Add plugins here
@@ -409,40 +417,20 @@ class TextAdventure:
                 self.menu_selection = 0
 
     def update(self):
-        # Calculate time delta
-        now = time.time()
-        dt = now - self.last_update
-        self.last_update = now
+        """Update the game state."""
+        # Calculate time since last update
+        current_time = time.time()
+        dt = current_time - self.last_update
         
-        # Update FPS calculation
+        # Update FPS counter
         self.update_fps(dt)
         
         # Update message timeout
-        if self.message and self.message_timeout > 0:
+        if self.message_timeout > 0:
             self.message_timeout -= dt
             if self.message_timeout <= 0:
                 self.message = ""
                 self.needs_redraw = True
-        
-        # Update player position based on movement direction
-        if not self.in_menu and (self.dx != 0 or self.dy != 0):
-            # Accumulate movement
-            self.acc_x += self.dx * self.move_speed * dt
-            self.acc_y += self.dy * self.move_speed * dt
-            
-            # Apply accumulated movement when it reaches at least 1 cell
-            move_x = int(self.acc_x)
-            move_y = int(self.acc_y)
-            
-            if move_x != 0 or move_y != 0:
-                self.world_x += move_x
-                self.world_y += move_y
-                self.acc_x -= move_x
-                self.acc_y -= move_y
-                self.needs_redraw = True
-                
-                # Check if we moved over a fuel ('&') character
-                self.check_for_fuel()
         
         # Update all active plugins
         for plugin in self.plugins:
@@ -459,6 +447,49 @@ class TextAdventure:
             self.direction += "E"
         elif self.dx < 0:
             self.direction += "W"
+
+    def handle_movement(self):
+        """Handle player movement."""
+        # Calculate time since last update
+        current_time = time.time()
+        dt = current_time - self.last_update
+        self.last_update = current_time
+        
+        # Calculate movement based on speed and time
+        move_amount = self.move_speed * dt
+        
+        # Apply movement if direction keys are pressed
+        if self.dx != 0 or self.dy != 0:
+            # Accumulate movement
+            self.acc_x += self.dx * move_amount
+            self.acc_y += self.dy * move_amount
+            
+            # Apply accumulated movement
+            dx_int = int(self.acc_x)
+            dy_int = int(self.acc_y)
+            
+            if dx_int != 0 or dy_int != 0:
+                # Update world coordinates
+                self.world_x += dx_int
+                self.world_y += dy_int
+                
+                # Subtract applied movement from accumulator
+                self.acc_x -= dx_int
+                self.acc_y -= dy_int
+                
+                # Mark for redraw
+                self.needs_redraw = True
+                
+                # Check if we moved over a fuel ('&') character
+                self.check_for_fuel()
+                
+                # Update character cache
+                self.update_char_cache()
+        
+        # Update all active plugins
+        for plugin in self.plugins:
+            if plugin.active:
+                plugin.update(dt)
 
     def update_fps(self, dt):
         """Update the FPS calculation."""
@@ -730,14 +761,36 @@ class TextAdventure:
 
     def get_char_at(self, x, y):
         """Get the character at world coordinates (x, y)"""
+        # Check if we have this character in the cache
+        cache_key = f"{x},{y}"
+        if cache_key in self.char_cache:
+            return self.char_cache[cache_key]
+            
+        # Calculate character if not in cache
         # Check if there's a space at this location
         space_key = self.get_space_key(x, y)
         if space_key in self.spaces:
-            return ' '
+            char = ' '
+        else:
+            # Calculate character based on location ID
+            location_id = (x + y * 1000) % 127
+            char = chr(location_id)
             
-        # Calculate character based on location ID
-        location_id = (x + y * 1000) % 127
-        return chr(location_id)
+        # Store in cache
+        self.char_cache[cache_key] = char
+        return char
+        
+    def update_char_cache(self):
+        """Update the character cache when player moves."""
+        # Only update if player has moved
+        if self.world_x != self.last_player_x or self.world_y != self.last_player_y:
+            # Clear the cache
+            self.char_cache = {}
+            # Update last position
+            self.last_player_x = self.world_x
+            self.last_player_y = self.world_y
+            # Mark cache as valid
+            self.cache_valid = True
 
     def get_space_key(self, x, y):
         """Generate a hash key for a space at coordinates (x, y)"""
@@ -807,6 +860,7 @@ class TextAdventure:
                     self.check_resize = False
                 
                 self.handle_input()
+                self.handle_movement()
                 self.update()
                 self.render()
                 
