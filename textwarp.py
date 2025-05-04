@@ -11,6 +11,7 @@ from plugins.base import Plugin
 from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
 from plugins.network import NetworkPlugin
+from plugins.gui_3d import GUI3DPlugin
 
 class TextAdventure:
     def __init__(self):
@@ -116,6 +117,7 @@ class TextAdventure:
         self.plugins.append(SnakePlugin(self))
         self.plugins.append(GraphClassifierPlugin(self))
         self.plugins.append(NetworkPlugin(self))
+        self.plugins.append(GUI3DPlugin(self))
         
         # Update plugin menu
         self.menus["plugins"] = [p.name + (" [Active]" if p.active else " [Inactive]") for p in self.plugins] + ["Back"]
