@@ -288,7 +288,7 @@ class Polygraph3DPlugin(Plugin):
             x = int(round(x))
         if isinstance(y, float):
             y = int(round(y))
-            
+        
         # Check if the height is already cached
         key = f"{x},{y}"
         if key in self.height_map:
@@ -309,6 +309,23 @@ class Polygraph3DPlugin(Plugin):
         # Use a hash of the coordinates to get a consistent but varied value
         variation = (hash(key) % 1000) / 2000.0 - 0.25  # Range: -0.25 to 0.25
         height += variation
+        
+        # Get the character at this position and add ASCII height component
+        try:
+            char = self.game.get_char_at(x, y)
+            if char:
+                # Add (ASCII code - 64) / 10 to the height
+                # This makes uppercase letters (A-Z) have values from 0.1 to 2.6
+                ascii_height = (ord(char) - 64) / 2.0
+                
+                # Ensure the ASCII component is within reasonable bounds
+                ascii_height = max(-5, min(5, ascii_height))
+                
+                # Add the ASCII height component to the total height
+                height += ascii_height
+        except:
+            # If there's any error getting the character, just use the original height
+            pass
         
         # Cache the height
         self.height_map[key] = height
