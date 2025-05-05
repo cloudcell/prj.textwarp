@@ -690,10 +690,33 @@ class GUI3DPlugin(Plugin):
                         if event.key == pygame.K_f:  # F key
                             # Toggle fullscreen
                             self.is_fullscreen = not self.is_fullscreen
+                            
+                            # Store current camera position and orientation
+                            prev_rotation_x = self.rotation_x
+                            prev_rotation_y = self.rotation_y
+                            prev_zoom = self.zoom
+                            
+                            # Get current window info
+                            prev_width = pygame.display.Info().current_w
+                            prev_height = pygame.display.Info().current_h
+                            
+                            # Toggle fullscreen mode
                             if self.is_fullscreen:
                                 pygame.display.set_mode((0, 0), pygame.FULLSCREEN | DOUBLEBUF | OPENGL)
                             else:
                                 pygame.display.set_mode(self.window_size, DOUBLEBUF | OPENGL)
+                            
+                            # Get new window dimensions
+                            new_width = pygame.display.Info().current_w
+                            new_height = pygame.display.Info().current_h
+                            
+                            # Calculate aspect ratio change
+                            prev_aspect = prev_width / prev_height
+                            new_aspect = new_width / new_height
+                            
+                            # Adjust zoom to maintain the same view with the new aspect ratio
+                            aspect_ratio_change = new_aspect / prev_aspect
+                            self.zoom = prev_zoom * math.sqrt(aspect_ratio_change)
                             
                             # Reinitialize OpenGL context after changing display mode
                             glEnable(GL_DEPTH_TEST)
@@ -707,13 +730,27 @@ class GUI3DPlugin(Plugin):
                             glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1))
                             glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.8, 0.8, 0.8, 1))
                             
-                            # Set up the projection matrix
+                            # Set up the projection matrix with the new aspect ratio
                             glMatrixMode(GL_PROJECTION)
                             glLoadIdentity()
-                            gluPerspective(60, (pygame.display.Info().current_w/pygame.display.Info().current_h), 0.1, 200.0)
+                            aspect_ratio = new_width / new_height
+                            gluPerspective(60, aspect_ratio, 0.1, 200.0)
+                            
+                            # Restore camera position and orientation
+                            self.rotation_x = prev_rotation_x
+                            self.rotation_y = prev_rotation_y
+                            
+                            # Center the view on the map
+                            # This ensures the center of the map is at the center of the screen
+                            glMatrixMode(GL_MODELVIEW)
+                            glLoadIdentity()
+                            glTranslatef(0, 0, self.zoom)
+                            glRotatef(self.rotation_x, 1, 0, 0)
+                            glRotatef(self.rotation_y, 0, 1, 0)
+                            glRotatef(self.rotation_z, 0, 0, 1)
                             
                             # Add a debug message about fullscreen toggle
-                            self.add_debug_message(f"Fullscreen: {self.is_fullscreen}")
+                            self.add_debug_message(f"Fullscreen: {self.is_fullscreen} ({new_width}x{new_height})")
                 
                 # Handle keyboard input for camera-relative movement
                 if self.handle_3d_input:
