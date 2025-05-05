@@ -127,15 +127,17 @@ class GUI3DPlugin(Plugin):
         
     def update(self, dt):
         """Update the plugin state."""
-        if not self.active:
+        if not self.active or not self.running:
             return
             
-        # Update the character map based on the current game state
+        # Update the character map
         self.update_character_map()
         
-        # Directly check for snakes to ensure they're visualized
+        # Check for snakes directly
         self.check_for_snakes()
-    
+        
+        # No need to update debug info here as it's handled elsewhere
+        
     def check_for_snakes(self):
         """Directly check for snakes in the game and add them to the visualization."""
         # Skip if not active or running
@@ -151,6 +153,7 @@ class GUI3DPlugin(Plugin):
                 
         # If no snake plugin or no snakes, return
         if not snake_plugin or not hasattr(snake_plugin, 'snakes') or not snake_plugin.snakes:
+            self.add_debug_message("No snakes found in check_for_snakes")
             return
             
         # Debug output
@@ -164,6 +167,10 @@ class GUI3DPlugin(Plugin):
                 break
         
         # Process each snake
+        with self.lock:
+            # Clear existing snakes first
+            self.snakes = []
+            
         for snake_idx, snake in enumerate(snake_plugin.snakes):
             if not hasattr(snake, 'body') or len(snake.body) < 2:
                 continue
@@ -921,10 +928,15 @@ class GUI3DPlugin(Plugin):
     def draw_connected_snakes(self):
         """Draw snakes as balls connected by lines."""
         try:
-            if not self.snakes:
-                return
+            with self.lock:
+                if not self.snakes or len(self.snakes) == 0:
+                    self.add_debug_message("No snakes to draw")
+                    return
                 
-            self.add_debug_message(f"Drawing {len(self.snakes)} snakes")  # Debug output
+                # Make a local copy to avoid threading issues
+                snakes_to_draw = list(self.snakes)
+            
+            self.add_debug_message(f"Drawing {len(snakes_to_draw)} snakes")  # Debug output
             
             # Save current OpenGL state
             glPushAttrib(GL_ALL_ATTRIB_BITS)
@@ -954,7 +966,7 @@ class GUI3DPlugin(Plugin):
                     break
             
             # Draw each snake
-            for snake_idx, snake in enumerate(self.snakes):
+            for snake_idx, snake in enumerate(snakes_to_draw):
                 # Skip empty snakes
                 if not snake:
                     continue
@@ -997,15 +1009,20 @@ class GUI3DPlugin(Plugin):
                     intensity = 1.0
                     if audio_plugin and segment_type == 'head':
                         try:
-                            intensity = audio_plugin.get_snake_head_intensity(snake_idx)
+                            intensity = 1.0  # Default if method not available
+                            if hasattr(audio_plugin, 'get_snake_head_intensity'):
+                                intensity = audio_plugin.get_snake_head_intensity(snake_idx)
+                            elif hasattr(audio_plugin, 'beat_intensity'):
+                                intensity = audio_plugin.beat_intensity
                             # Make the head pulse with the music
                             color = (
                                 min(1.0, color[0] * (0.5 + 1.0 * intensity)),
                                 min(1.0, color[1] * (0.5 + 1.0 * intensity)),
                                 min(1.0, color[2] * (0.5 + 1.0 * intensity))
                             )
-                        except Exception:
+                        except Exception as e:
                             # If there's an error getting intensity, just use default
+                            self.add_debug_message(f"Audio intensity error: {e}")
                             pass
                     
                     # Set material properties for better lighting
@@ -1031,28 +1048,39 @@ class GUI3DPlugin(Plugin):
                     elif segment_type == 'rattle':
                         radius = 0.5  # Medium rattles
                         # Add a pulsing effect to rattles to make them more noticeable
-                        import math
-                        pulse = 0.2 * math.sin(time.time() * 5.0) + 0.8  # Pulsing between 0.6 and 1.0
-                        glColor4f(color[0] * pulse, color[1] * pulse, color[2] * pulse, 1.0)
-                        glMaterialfv(GL_FRONT, GL_EMISSION, (0.3, 0.0, 0.0, 1.0))  # Add glow to rattles
+                        if audio_plugin:
+                            # Use a different phase for rattles to create a wave effect
+                            phase = segment_idx / 10.0
+                            pulse = 0.5 + 0.5 * math.sin(time.time() * 5.0 + phase)
+                            # Add a subtle glow to rattles
+                            glMaterialfv(GL_FRONT, GL_EMISSION, (pulse * 0.3, 0.0, 0.0, 1.0))
                     else:
-                        radius = 0.3  # Smaller body segments
-                        
-                    # Create a sphere quadric object with higher quality
-                    quadric = gluNewQuadric()
-                    gluQuadricDrawStyle(quadric, GLU_FILL)
-                    gluQuadricNormals(quadric, GLU_SMOOTH)
-                    gluQuadricTexture(quadric, GL_TRUE)
-                    gluSphere(quadric, radius, 16, 16)  # Higher resolution spheres
-                    gluDeleteQuadric(quadric)
+                        radius = 0.4  # Smaller body segments
                     
+                    # Draw a sphere for this segment
+                    self.draw_sphere(radius, 16, 16)  # Use more slices/stacks for smoother spheres
+                    
+                    # Pop matrix for this segment
                     glPopMatrix()
-                    
+            
             # Restore OpenGL state
             glPopAttrib()
         except Exception as e:
             # Log the error but don't crash
             self.add_debug_message(f"Error drawing snakes: {e}")
+    
+    def draw_sphere(self, radius, slices, stacks):
+        """Draw a sphere with the given radius, slices, and stacks."""
+        try:
+            # Create a sphere quadric object with higher quality
+            quadric = gluNewQuadric()
+            gluQuadricDrawStyle(quadric, GLU_FILL)
+            gluQuadricNormals(quadric, GLU_SMOOTH)
+            gluQuadricTexture(quadric, GL_TRUE)
+            gluSphere(quadric, radius, slices, stacks)  # Higher resolution spheres
+            gluDeleteQuadric(quadric)
+        except Exception as e:
+            self.add_debug_message(f"Error drawing sphere: {e}")
     
     def draw_terrain_mesh(self):
         """Draw a mesh connecting the tips of the sticks to visualize the terrain surface."""
@@ -1684,7 +1712,7 @@ class GUI3DPlugin(Plugin):
             self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
             
             # Draw instructions
-            self.game.screen.addstr(2, 0, "Use ↑/↓ to select, ENTER to edit/activate", self.game.menu_color)
+            self.game.screen.addstr(2, 0, "Use ↑/↓ to select, ENTER to edit/activate, ←/→ to adjust values", self.game.menu_color)
             self.game.screen.addstr(3, 0, "Press ESC to exit without saving", self.game.menu_color)
             self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
             
