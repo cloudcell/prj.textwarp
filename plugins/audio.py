@@ -18,7 +18,7 @@ class AudioPlugin(Plugin):
         self.volume = 0.7  # Default volume (0.0 to 1.0)
         self.is_playing = False
         self.auto_play = True  # Auto-play next track when current one finishes
-        self.play_on_start = True  # Play random track when plugin is activated
+        self.play_on_start = False  # Play random track when plugin is activated
         self.show_track_info = True  # Show track info in the game UI
         self.track_info_timeout = 0.0  # Timeout for displaying track info
         self.track_info_duration = 5.0  # How long to display track info
@@ -84,8 +84,8 @@ class AudioPlugin(Plugin):
                 self.analysis_thread = threading.Thread(target=self.analyze_audio_thread, daemon=True)
                 self.analysis_thread.start()
             except Exception as e:
-                self.game.message = f"Audio plugin error: {e}"
-                self.game.message_timeout = 5.0
+                # Don't show error message to avoid cluttering the UI
+                self.initialized = False
                 
     def deactivate(self):
         """Deactivate the plugin."""
@@ -95,29 +95,26 @@ class AudioPlugin(Plugin):
         super().deactivate()
         
     def update(self, dt):
-        """Update the plugin state."""
-        if not self.active or not self.initialized:
-            return
-        
-        # Check if music has stopped and we need to play the next track
+        """Update the audio plugin state."""
         try:
+            if not self.active or not pygame.mixer.get_init():
+                return
+                
+            # Update track info timeout
+            if self.track_info_timeout > 0:
+                self.track_info_timeout -= dt
+                
+            # Check if a track has finished playing
             if self.is_playing and not pygame.mixer.music.get_busy():
-                if self.auto_play:
-                    self.play_random()
-        except pygame.error as e:
-            # Handle mixer not initialized error gracefully
-            self.is_playing = False
-            self.game.message = f"Audio analysis error: {e}"
-            self.game.message_timeout = 3.0
+                self.is_playing = False
+                
+                # Auto-play next track if enabled
+                if self.auto_play and self.playlist:
+                    self.play_next_track()
+        except Exception as e:
+            # Ignore errors if mixer is not initialized
+            pass
             
-        # Update track info timeout
-        if self.track_info_timeout > 0:
-            self.track_info_timeout -= dt
-            
-        # Update beat history
-        self.beat_history.pop(0)
-        self.beat_history.append(self.beat_intensity)
-        
     def render(self, screen):
         """Render the plugin on the curses screen."""
         if not self.active or not self.initialized or not self.show_track_info or self.track_info_timeout <= 0:

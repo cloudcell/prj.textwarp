@@ -637,6 +637,10 @@ class TextAdventure:
             # Render UI elements
             self.render_ui()
             
+            # Force a refresh to ensure all terminal drawing is complete
+            # before any plugins (like 3D GUI) start reading from the screen
+            self.screen.refresh()
+            
             # Render plugins
             for plugin in self.plugins:
                 if plugin.active:
@@ -657,6 +661,12 @@ class TextAdventure:
         # Find the nearest multiples of 10 for the visible area
         notch_start_x = (start_x // 10) * 10
         notch_start_y = (start_y // 10) * 10
+        
+        # Define the rendering boundaries (same as in render_game_world)
+        notch_left_margin = 3
+        notch_top_margin = 6
+        bottom_margin = 10
+        render_bottom = self.max_y - bottom_margin
         
         # Render horizontal notches (on top)
         for x in range(notch_start_x, end_x + 10, 10):
@@ -691,8 +701,8 @@ class TextAdventure:
             # Calculate screen position
             screen_y = y - start_y
             
-            # Skip if out of bounds or in the notch area
-            if screen_y < 6 or screen_y >= self.max_y:
+            # Skip if out of bounds or in the notch area or below the rendering area
+            if screen_y < notch_top_margin or screen_y >= render_bottom:
                 continue
                 
             # Get the tens digit (second digit from the right)
@@ -723,9 +733,52 @@ class TextAdventure:
         notch_left_margin = 3
         notch_top_margin = 6
         
-        # Adjust visible area to account for notch margins
-        for y in range(notch_top_margin, self.max_y):
-            for x in range(notch_left_margin, self.max_x):
+        # Calculate the bottom margin to ensure we don't draw outside valid area
+        bottom_margin = 12  # Increased to 12 to ensure we don't draw outside valid area
+        
+        # Calculate the actual rendering area
+        render_top = notch_top_margin
+        render_bottom = self.max_y - bottom_margin
+        render_left = notch_left_margin
+        render_right = self.max_x - 2  # Leave 2 columns on the right
+        
+        # Draw a very visible border around the rendering area
+        # Top border with '#' at corners
+        try:
+            self.screen.addch(render_top - 1, render_left - 1, '#')
+            for x in range(render_left, render_right):
+                self.screen.addch(render_top - 1, x, '#')
+            self.screen.addch(render_top - 1, render_right, '#')
+        except:
+            pass
+        
+        # Bottom border with '#' at corners
+        try:
+            self.screen.addch(render_bottom, render_left - 1, '#')
+            bottom_border = '#' * (render_right - render_left)
+            self.screen.addstr(render_bottom, render_left, bottom_border)
+            self.screen.addch(render_bottom, render_right, '#')
+        except:
+            pass
+        
+        # Left and right borders
+        for y in range(render_top, render_bottom):
+            try:
+                self.screen.addch(y, render_left - 1, '#')
+                self.screen.addch(y, render_right, '#')
+            except:
+                pass
+        
+        # Add a debug message at the bottom of the border
+        try:
+            debug_msg = f"Border: {render_top}-{render_bottom}, {render_left}-{render_right}"
+            self.screen.addstr(render_bottom + 1, render_left, debug_msg)
+        except:
+            pass
+        
+        # Adjust visible area to account for notch margins and ensure we stay within the border
+        for y in range(render_top, render_bottom):
+            for x in range(render_left, render_right):
                 # Calculate world coordinates
                 world_x = x - half_width + self.world_x
                 world_y = y - half_height + self.world_y
@@ -774,6 +827,19 @@ class TextAdventure:
                 self.screen.addstr(self.max_y - 2, 0, self.message)
             except:
                 pass  # Ignore errors from writing to the bottom-right corner
+        
+        # Display snake count on the second line with a black background
+        snake_count = 0
+        for plugin in self.plugins:
+            if hasattr(plugin, 'snakes') and plugin.active:
+                snake_count = len(plugin.snakes)
+                break
+        
+        try:
+            snake_indicator = f"Snakes Detected: {snake_count}"
+            self.screen.addstr(1, 0, snake_indicator, curses.color_pair(0) | curses.A_BOLD)
+        except:
+            pass  # Ignore errors
 
     def render_menu(self):
         # Draw semi-transparent overlay
@@ -978,7 +1044,7 @@ class TextAdventure:
                 with open('last_location.json', 'w') as f:
                     json.dump({'x': self.world_x, 'y': self.world_y}, f)
             except:
-                pass  # Ignore errors if the file can't be written
+                pass  # Ignore errors if the file doesn't exist or is invalid
 
     def handle_resize_signal(self, signum, frame):
         """Signal handler for SIGWINCH (window resize)."""

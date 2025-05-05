@@ -376,8 +376,11 @@ class Polygraph3DPlugin(Plugin):
                     # Get the height from our plugin (this updates the cache)
                     self.get_height(world_x, world_y)
             
+            # Create a copy of the height map to avoid modification during iteration
+            height_map_copy = dict(self.height_map)
+            
             # Now visualize all cached terrain points, not just the visible area
-            for key, height in self.height_map.items():
+            for key, height in height_map_copy.items():
                 try:
                     # Parse the coordinates from the key
                     # Handle floating-point coordinates by converting to float first, then to int
