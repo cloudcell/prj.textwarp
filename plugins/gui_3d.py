@@ -79,6 +79,9 @@ class GUI3DPlugin(Plugin):
         self.window = None
         self.window_size = (800, 600)      # Default window size
         self.is_fullscreen = False         # Track fullscreen state
+        self.saved_position = None         # Store player position when toggling fullscreen
+        self.camera_offset_x = 0           # Horizontal camera offset for centering
+        self.camera_offset_y = 0           # Vertical camera offset for centering
         
         self.characters = {}  # 3D character objects
         self.last_mouse_pos = None
@@ -109,6 +112,15 @@ class GUI3DPlugin(Plugin):
         
         # Load settings if they exist
         self.load_settings()
+        
+        # Initialize Pygame and OpenGL
+        self.screen = None
+        self.width = 800
+        self.height = 600
+        self.is_fullscreen = False
+        
+        # Camera properties
+        self.zoom = -50
         
     @property
     def name(self):
@@ -689,102 +701,66 @@ class GUI3DPlugin(Plugin):
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_f:  # F key
                             # Toggle fullscreen
-                            self.is_fullscreen = not self.is_fullscreen
-                            
-                            # Store current camera position and orientation
-                            prev_rotation_x = self.rotation_x
-                            prev_rotation_y = self.rotation_y
-                            prev_zoom = self.zoom
-                            
-                            # Get current window info and player position
-                            prev_width = pygame.display.Info().current_w
-                            prev_height = pygame.display.Info().current_h
-                            prev_player_x = self.game.world_x
-                            prev_player_y = self.game.world_y
-                            
-                            # Toggle fullscreen mode
-                            if self.is_fullscreen:
-                                pygame.display.set_mode((0, 0), pygame.FULLSCREEN | DOUBLEBUF | OPENGL)
+                            self.toggle_fullscreen()
+                        elif event.key == pygame.K_s:  # S key
+                            # Toggle snake connections
+                            self.show_snake_connections = not self.show_snake_connections
+                        elif event.key == pygame.K_a:  # A key
+                            # Toggle axes
+                            self.show_axes = not self.show_axes
+                        elif event.key == pygame.K_z:  # Z key
+                            # Toggle zero level grid
+                            self.show_zero_level_grid = not self.show_zero_level_grid
+                        elif event.key == pygame.K_i:  # I key
+                            # Toggle ASCII intensity
+                            self.ascii_intensity = not self.ascii_intensity
+                        elif event.key == pygame.K_h:  # H key
+                            # Toggle ASCII height
+                            self.ascii_height = not self.ascii_height
+                        elif event.key == pygame.K_r:  # R key
+                            # Reset view
+                            self.reset_view()
+                        elif event.key == pygame.K_p:  # P key
+                            # Toggle terrain mesh
+                            self.show_terrain_mesh = not self.show_terrain_mesh
+                        elif event.key == pygame.K_c:  # C key
+                            # Toggle terrain mesh style
+                            if self.terrain_mesh_style == "filled":
+                                self.terrain_mesh_style = "wireframe"
                             else:
-                                pygame.display.set_mode(self.window_size, DOUBLEBUF | OPENGL)
-                            
-                            # Get new window dimensions
-                            new_width = pygame.display.Info().current_w
-                            new_height = pygame.display.Info().current_h
-                            
-                            # Calculate aspect ratio change
-                            prev_aspect = prev_width / prev_height
-                            new_aspect = new_width / new_height
-                            
-                            # Adjust zoom to maintain the same view with the new aspect ratio
-                            aspect_ratio_change = new_aspect / prev_aspect
-                            self.zoom = prev_zoom * math.sqrt(aspect_ratio_change)
-                            
-                            # Calculate screen center offset
-                            # This determines how much to adjust the view to center the grid
-                            if self.is_fullscreen:
-                                # When going to fullscreen, we want to center the view on (0,0,0)
-                                # Save the current position so we can restore it later
-                                if not hasattr(self, 'saved_position'):
-                                    self.saved_position = None
-                                
-                                self.saved_position = (prev_player_x, prev_player_y)
-                                
-                                # Reset the world position to center the grid
-                                self.game.world_x = 0
-                                self.game.world_y = 0
-                                
-                                # Force update of character map to reflect the new centered position
-                                self.update_character_map()
-                                self.check_for_snakes()
-                                
-                                # Add a debug message with centering information
-                                self.add_debug_message(f"Fullscreen: Grid centered at (0,0)")
-                            else:
-                                # When returning to windowed mode, restore the saved position
-                                if hasattr(self, 'saved_position') and self.saved_position:
-                                    self.game.world_x, self.game.world_y = self.saved_position
-                                    
-                                    # Force update of character map to reflect the restored position
-                                    self.update_character_map()
-                                    self.check_for_snakes()
-                                    
-                                    self.add_debug_message(f"Windowed: Position restored to ({self.game.world_x:.1f}, {self.game.world_y:.1f})")
-                                    self.saved_position = None
-                                else:
-                                    # If no saved position, just show window dimensions
-                                    self.add_debug_message(f"Windowed: {new_width}x{new_height}")
-                            
-                            # Reinitialize OpenGL context after changing display mode
-                            glEnable(GL_DEPTH_TEST)
-                            glEnable(GL_LIGHTING)
-                            glEnable(GL_LIGHT0)
-                            glEnable(GL_COLOR_MATERIAL)
-                            glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
-                            
-                            # Set up the light
-                            glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
-                            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1))
-                            glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.8, 0.8, 0.8, 1))
-                            
-                            # Set up the projection matrix with the new aspect ratio
-                            glMatrixMode(GL_PROJECTION)
-                            glLoadIdentity()
-                            aspect_ratio = new_width / new_height
-                            gluPerspective(60, aspect_ratio, 0.1, 200.0)
-                            
-                            # Restore camera position and orientation
-                            self.rotation_x = prev_rotation_x
-                            self.rotation_y = prev_rotation_y
-                            
-                            # Center the view on the map
-                            # This ensures the center of the map is at the center of the screen
-                            glMatrixMode(GL_MODELVIEW)
-                            glLoadIdentity()
-                            glTranslatef(0, 0, self.zoom)
-                            glRotatef(self.rotation_x, 1, 0, 0)
-                            glRotatef(self.rotation_y, 0, 1, 0)
-                            glRotatef(self.rotation_z, 0, 0, 1)
+                                self.terrain_mesh_style = "filled"
+                        elif event.key == pygame.K_o:  # O key
+                            # Toggle terrain mesh opacity
+                            self.terrain_mesh_opacity = 1.0 - self.terrain_mesh_opacity
+                        elif event.key == pygame.K_m:  # M key
+                            # Toggle terrain color scheme
+                            schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
+                            idx = schemes.index(self.terrain_color_scheme)
+                            self.terrain_color_scheme = schemes[(idx + 1) % len(schemes)]
+                        elif event.key == pygame.K_l:  # L key
+                            # Toggle letters
+                            self.show_letters = not self.show_letters
+                        elif event.key == pygame.K_k:  # K key
+                            # Toggle sticks
+                            self.show_sticks = not self.show_sticks
+                        elif event.key == pygame.K_d:  # D key
+                            # Toggle dots without sticks
+                            self.show_dots_without_sticks = not self.show_dots_without_sticks
+                        elif event.key == pygame.K_b:  # B key
+                            # Toggle mesh
+                            self.show_mesh = not self.show_mesh
+                        elif event.key == pygame.K_n:  # N key
+                            # Toggle render distance
+                            self.render_distance = 1000 if self.render_distance == 500 else 500
+                        elif event.key == pygame.K_t:  # T key
+                            # Toggle stick dot size
+                            self.stick_dot_size = 16.0 if self.stick_dot_size == 8.0 else 8.0
+                        elif event.key == pygame.K_g:  # G key
+                            # Show settings menu
+                            self.show_settings_menu()
+                        elif event.key == pygame.K_y:  # Y key
+                            # Show key bindings menu
+                            self.show_key_bindings_menu()
                 
                 # Handle keyboard input for camera-relative movement
                 if self.handle_3d_input:
@@ -864,12 +840,19 @@ class GUI3DPlugin(Plugin):
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
             glClearColor(0.0, 0.0, 0.0, 1.0)
             
-            # Set up the modelview matrix
+            # Reset the modelview matrix
             glMatrixMode(GL_MODELVIEW)
             glLoadIdentity()
             
             # Apply camera transformations
-            glTranslatef(0, 0, self.zoom)
+            if self.is_fullscreen:
+                # Apply a significant offset in fullscreen mode
+                glTranslatef(self.camera_offset_x, self.camera_offset_y, self.zoom * self.fullscreen_zoom_factor)
+            else:
+                # Standard view in windowed mode
+                glTranslatef(0, 0, self.zoom)
+            
+            # Apply rotations
             glRotatef(self.rotation_x, 1, 0, 0)
             glRotatef(self.rotation_y, 0, 1, 0)
             glRotatef(self.rotation_z, 0, 0, 1)
@@ -2031,211 +2014,84 @@ class GUI3DPlugin(Plugin):
             # Log the error but don't crash
             self.add_debug_message(f"Error drawing lines: {e}")
     
-    def show_3d_settings_menu(self):
-        """Show the 3D settings menu."""
-        # Store original settings in case user cancels
-        original_show_letters = self.show_letters
-        original_show_sticks = self.show_sticks
-        original_show_dots_without_sticks = self.show_dots_without_sticks
-        original_show_mesh = self.show_mesh
-        original_show_terrain_mesh = self.show_terrain_mesh
-        original_terrain_mesh_style = self.terrain_mesh_style
-        original_terrain_mesh_opacity = self.terrain_mesh_opacity
-        original_terrain_color_scheme = self.terrain_color_scheme
-        original_stick_dot_size = self.stick_dot_size
-        original_show_snake_connections = self.show_snake_connections
-        original_render_distance = self.render_distance
-        original_show_axes = self.show_axes
-        original_show_zero_level_grid = self.show_zero_level_grid
-        original_ascii_intensity = self.ascii_intensity
-        original_ascii_height = self.ascii_height
+    def toggle_fullscreen(self):
+        """Toggle between fullscreen and windowed mode."""
+        self.is_fullscreen = not self.is_fullscreen
         
-        # Variables for menu navigation
-        current_selection = 0
-        in_settings_menu = True
+        # Store previous values
+        prev_width, prev_height = self.width, self.height
+        prev_player_x, prev_player_y = self.game.world_x, self.game.world_y
+        prev_rotation_x, prev_rotation_y = self.rotation_x, self.rotation_y
         
-        # Create settings list
-        settings = [
-            {"name": "Show Letters", "value": self.show_letters, "type": "bool"},
-            {"name": "Show Sticks", "value": self.show_sticks, "type": "bool"},
-            {"name": "Show Dots Without Sticks", "value": self.show_dots_without_sticks, "type": "bool"},
-            {"name": "Show Mesh", "value": self.show_mesh, "type": "bool"},
-            {"name": "Show Terrain Mesh", "value": self.show_terrain_mesh, "type": "bool"},
-            {"name": "Terrain Mesh Style", "value": self.terrain_mesh_style, "type": "str"},
-            {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float", "min": 0.1, "max": 1.0, "step": 0.1},
-            {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"},
-            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float", "min": 1.0, "max": 20.0, "step": 1.0},
-            {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"},
-            {"name": "Render Distance", "value": self.render_distance, "type": "int", "min": 10, "max": 200, "step": 10},
-            {"name": "Show Axes", "value": self.show_axes, "type": "bool"},
-            {"name": "Show Zero Level Grid", "value": self.show_zero_level_grid, "type": "bool"},
-            {"name": "ASCII Intensity", "value": self.ascii_intensity, "type": "bool"},
-            {"name": "ASCII Height", "value": self.ascii_height, "type": "bool"},
-            {"name": "Save Settings", "value": None, "type": "button"},
-            {"name": "Cancel", "value": None, "type": "button"}
-        ]
-        
-        # Variables for menu navigation
-        current_selection = 0
-        in_menu = True
-        
-        # Main loop for settings menu
-        while in_menu:
-            # Clear screen
-            self.game.screen.clear()
+        # Set the new display mode
+        if self.is_fullscreen:
+            # Get desktop resolution
+            desktop_info = pygame.display.Info()
+            new_width, new_height = desktop_info.current_w, desktop_info.current_h
             
-            # Draw header
-            self.game.screen.addstr(0, 0, "3D Visualization Settings", self.game.menu_color | curses.A_BOLD)
-            self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            # Set fullscreen mode
+            self.screen = pygame.display.set_mode((new_width, new_height), pygame.OPENGL | pygame.DOUBLEBUF | pygame.FULLSCREEN)
+            self.width, self.height = new_width, new_height
             
-            # Draw instructions
-            self.game.screen.addstr(2, 0, "Use ↑/↓ to navigate, ENTER to toggle/edit, ←/→ to adjust values", self.game.menu_color)
-            self.game.screen.addstr(3, 0, "Press ESC to exit without saving", self.game.menu_color)
-            self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            # Save current position and center the grid
+            if not hasattr(self, 'saved_position'):
+                self.saved_position = None
             
-            # Draw settings
-            for i, setting in enumerate(settings):
-                # Highlight the selected item
-                if i == current_selection:
-                    attr = self.game.menu_color | curses.A_BOLD
-                else:
-                    attr = self.game.menu_color
+            self.saved_position = (prev_player_x, prev_player_y)
+            
+            # Reset the world position to center the grid
+            self.game.world_x = 0
+            self.game.world_y = 0
+            
+            # Force update of character map to reflect the new centered position
+            self.update_character_map()
+            self.check_for_snakes()
+            
+            # Set camera offsets for fullscreen mode
+            # These values are experimentally determined to center the grid
+            self.camera_offset_x = 0
+            self.camera_offset_y = 0
+            self.fullscreen_zoom_factor = 2.0  # Zoom out in fullscreen mode
+            
+            # Add a debug message with centering information
+            self.add_debug_message(f"Fullscreen: Grid centered at (0,0)")
+        else:
+            # Return to windowed mode
+            self.screen = pygame.display.set_mode((prev_width, prev_height), pygame.OPENGL | pygame.DOUBLEBUF)
+            
+            # Restore the saved position
+            if hasattr(self, 'saved_position') and self.saved_position:
+                self.game.world_x, self.game.world_y = self.saved_position
                 
-                # Draw the item
-                if setting["type"] == "bool":
-                    value_str = "Yes" if setting["value"] else "No"
-                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {value_str}", attr)
-                elif setting["type"] == "float" or setting["type"] == "int":
-                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
-                elif setting["type"] == "str":
-                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
-                else:
-                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}", attr)
+                # Force update of character map to reflect the restored position
+                self.update_character_map()
+                self.check_for_snakes()
+                
+                self.add_debug_message(f"Windowed: Position restored to ({self.game.world_x:.1f}, {self.game.world_y:.1f})")
+                self.saved_position = None
+            else:
+                # If no saved position, just show window dimensions
+                self.add_debug_message(f"Windowed: {prev_width}x{prev_height}")
             
-            # Draw footer
-            self.game.screen.addstr(self.game.max_y - 2, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
-            
-            # Refresh screen
-            self.game.screen.refresh()
-            
-            # Get input
-            key = self.game.screen.getch()
-            
-            # Handle input
-            if key == curses.KEY_UP:
-                current_selection = (current_selection - 1) % len(settings)
-            elif key == curses.KEY_DOWN:
-                current_selection = (current_selection + 1) % len(settings)
-            elif key == 10:  # Enter key
-                # Handle selection
-                setting = settings[current_selection]
-                if setting["type"] == "bool":
-                    # Toggle boolean value
-                    setting["value"] = not setting["value"]
-                elif setting["type"] == "button":
-                    if setting["name"] == "Save Settings":
-                        # Save settings
-                        self.show_letters = settings[0]["value"]
-                        self.show_sticks = settings[1]["value"]
-                        self.show_dots_without_sticks = settings[2]["value"]
-                        self.show_mesh = settings[3]["value"]
-                        self.show_terrain_mesh = settings[4]["value"]
-                        self.terrain_mesh_style = settings[5]["value"]
-                        self.terrain_mesh_opacity = settings[6]["value"]
-                        self.terrain_color_scheme = settings[7]["value"]
-                        self.stick_dot_size = settings[8]["value"]
-                        self.show_snake_connections = settings[9]["value"]
-                        self.render_distance = settings[10]["value"]
-                        self.show_axes = settings[11]["value"]
-                        self.show_zero_level_grid = settings[12]["value"]
-                        self.ascii_intensity = settings[13]["value"]
-                        self.ascii_height = settings[14]["value"]
-                        self.save_settings()
-                        in_menu = False
-                    elif setting["name"] == "Cancel":
-                        # Restore original settings
-                        self.show_letters = original_show_letters
-                        self.show_sticks = original_show_sticks
-                        self.show_dots_without_sticks = original_show_dots_without_sticks
-                        self.show_mesh = original_show_mesh
-                        self.show_terrain_mesh = original_show_terrain_mesh
-                        self.terrain_mesh_style = original_terrain_mesh_style
-                        self.terrain_mesh_opacity = original_terrain_mesh_opacity
-                        self.terrain_color_scheme = original_terrain_color_scheme
-                        self.stick_dot_size = original_stick_dot_size
-                        self.show_snake_connections = original_show_snake_connections
-                        self.render_distance = original_render_distance
-                        self.show_axes = original_show_axes
-                        self.show_zero_level_grid = original_show_zero_level_grid
-                        self.ascii_intensity = original_ascii_intensity
-                        self.ascii_height = original_ascii_height
-                        in_menu = False
-            elif key == curses.KEY_LEFT:
-                # Decrease value
-                setting = settings[current_selection]
-                if setting["type"] == "float":
-                    # Check if min and step exist, use defaults if not
-                    min_val = setting.get("min", 0.0)
-                    step = setting.get("step", 0.1)
-                    setting["value"] = max(min_val, setting["value"] - step)
-                elif setting["type"] == "int":
-                    # Check if min and step exist, use defaults if not
-                    min_val = setting.get("min", 0)
-                    step = setting.get("step", 1)
-                    setting["value"] = max(min_val, setting["value"] - step)
-                elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
-                    # Cycle through mesh style options
-                    if setting["value"] == "filled":
-                        setting["value"] = "wireframe"
-                    else:
-                        setting["value"] = "filled"
-                elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
-                    # Cycle through color scheme options
-                    schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
-                    idx = schemes.index(setting["value"])
-                    setting["value"] = schemes[(idx - 1) % len(schemes)]
-            elif key == curses.KEY_RIGHT:
-                # Increase value
-                setting = settings[current_selection]
-                if setting["type"] == "float":
-                    # Check if max and step exist, use defaults if not
-                    max_val = setting.get("max", 10.0)
-                    step = setting.get("step", 0.1)
-                    setting["value"] = min(max_val, setting["value"] + step)
-                elif setting["type"] == "int":
-                    # Check if max and step exist, use defaults if not
-                    max_val = setting.get("max", 100)
-                    step = setting.get("step", 1)
-                    setting["value"] = min(max_val, setting["value"] + step)
-                elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
-                    # Cycle through mesh style options
-                    if setting["value"] == "wireframe":
-                        setting["value"] = "filled"
-                    else:
-                        setting["value"] = "wireframe"
-                elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
-                    # Cycle through color scheme options
-                    schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
-                    idx = schemes.index(setting["value"])
-                    setting["value"] = schemes[(idx + 1) % len(schemes)]
-            elif key == 27:  # Escape key
-                # Restore original settings
-                self.show_letters = original_show_letters
-                self.show_sticks = original_show_sticks
-                self.show_dots_without_sticks = original_show_dots_without_sticks
-                self.show_mesh = original_show_mesh
-                self.show_terrain_mesh = original_show_terrain_mesh
-                self.terrain_mesh_style = original_terrain_mesh_style
-                self.terrain_mesh_opacity = original_terrain_mesh_opacity
-                self.terrain_color_scheme = original_terrain_color_scheme
-                self.stick_dot_size = original_stick_dot_size
-                self.show_snake_connections = original_show_snake_connections
-                self.render_distance = original_render_distance
-                self.show_axes = original_show_axes
-                self.show_zero_level_grid = original_show_zero_level_grid
-                self.ascii_intensity = original_ascii_intensity
-                self.ascii_height = original_ascii_height
-                in_menu = False
+            # Reset camera offsets for windowed mode
+            self.camera_offset_x = 0
+            self.camera_offset_y = 0
+            self.fullscreen_zoom_factor = 1.0  # Normal zoom in windowed mode
         
-        # Force redraw
-        self.game.needs_redraw = True
+        # Reinitialize OpenGL context after changing display mode
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        glEnable(GL_NORMALIZE)
+        
+        # Set up the projection matrix with the new aspect ratio
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        aspect_ratio = self.width / self.height
+        
+        # Use a wider field of view in fullscreen mode
+        if self.is_fullscreen:
+            gluPerspective(75, aspect_ratio, 0.1, 500.0)  # Wider FOV, greater depth
+        else:
+            gluPerspective(60, aspect_ratio, 0.1, 200.0)  # Standard FOV
