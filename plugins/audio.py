@@ -58,32 +58,43 @@ class AudioPlugin(Plugin):
         # Initialize pygame mixer if not already initialized
         if not self.initialized:
             try:
+                # Make sure pygame is initialized first
+                if not pygame.get_init():
+                    pygame.init()
+                    
+                # Then initialize the mixer
                 if not pygame.mixer.get_init():
                     pygame.mixer.init(self.sample_rate, -16, 2, self.buffer_size)
-                self.initialized = True
-                
-                # Set up audio capture for visualization
-                pygame.mixer.set_num_channels(8)
-                
-                # Scan for music files
-                self.refresh_playlist()
-                
-                # Start playing if play_on_start is enabled
-                if self.play_on_start and self.playlist:
-                    # If we have a last played track, use that
-                    if self.last_played_track and os.path.exists(self.last_played_track) and self.last_played_track in self.playlist:
-                        self.play(self.last_played_track)
-                        track_name = os.path.basename(self.last_played_track)
-                        self.game.message = f"Resuming: {track_name}"
-                        self.game.message_timeout = 3.0
-                    else:
-                        # Otherwise play a random track
-                        self.play_random()
                     
-                # Start a thread for audio analysis
-                self.analysis_thread = threading.Thread(target=self.analyze_audio_thread, daemon=True)
-                self.analysis_thread.start()
+                self.initialized = pygame.mixer.get_init() is not None
+                
+                if self.initialized:
+                    # Set up audio capture for visualization
+                    pygame.mixer.set_num_channels(8)
+                    
+                    # Scan for music files
+                    self.refresh_playlist()
+                    
+                    # Start playing if play_on_start is enabled
+                    if self.play_on_start and self.playlist:
+                        # If we have a last played track, use that
+                        if self.last_played_track and os.path.exists(self.last_played_track) and self.last_played_track in self.playlist:
+                            self.play(self.last_played_track)
+                            track_name = os.path.basename(self.last_played_track)
+                            self.game.message = f"Resuming: {track_name}"
+                            self.game.message_timeout = 3.0
+                        else:
+                            # Otherwise play a random track
+                            self.play_random()
+                        
+                    # Start a thread for audio analysis
+                    self.analysis_thread = threading.Thread(target=self.analyze_audio_thread, daemon=True)
+                    self.analysis_thread.start()
+                else:
+                    self.game.message = "Failed to initialize audio mixer"
+                    self.game.message_timeout = 3.0
             except Exception as e:
+                self.initialized = False
                 self.game.message = f"Audio plugin error: {e}"
                 self.game.message_timeout = 5.0
                 
@@ -230,19 +241,22 @@ class AudioPlugin(Plugin):
     def analyze_audio_thread(self):
         """Thread function for analyzing audio in real-time."""
         try:
-            while True:
-                if self.initialized and self.is_playing and pygame.mixer.music.get_busy():
-                    self.analyze_audio()
-                time.sleep(0.05)  # 50ms update rate (20 Hz)
+            while self.active:
+                if self.initialized and pygame.mixer.get_init():
+                    try:
+                        self.analyze_audio()
+                    except Exception as e:
+                        print(f"Audio analysis error: {e}")
+                time.sleep(0.1)  # Analyze 10 times per second
         except Exception as e:
-            print(f"Audio analysis error: {e}")
+            print(f"Audio analysis thread error: {e}")
             
     def analyze_audio(self):
         """Analyze the currently playing audio to extract beat and frequency information."""
         try:
             # Since pygame doesn't provide direct access to the audio buffer,
             # we'll use a simple approach based on the current volume level
-            if pygame.mixer.music.get_busy():
+            if self.initialized and pygame.mixer.get_init() and pygame.mixer.music.get_busy():
                 # Get the current position in the track (in seconds)
                 pos = pygame.mixer.music.get_pos() / 1000.0
                 
@@ -263,9 +277,14 @@ class AudioPlugin(Plugin):
                 
                 # Add some randomness to make it more interesting
                 self.beat_intensity = min(1.0, self.beat_intensity * (0.8 + 0.4 * random.random()))
+            else:
+                # Set default values when mixer is not initialized or music is not playing
+                self.beat_intensity = 0.5
+                self.band_intensities = [0.5] * len(self.frequency_bands)
         except Exception as e:
             print(f"Audio analysis error: {e}")
             self.beat_intensity = 0.5  # Default fallback value
+            self.band_intensities = [0.5] * len(self.frequency_bands)
             
     def get_snake_head_intensity(self, snake_index=0):
         """Get the intensity level for a snake head based on audio analysis.
