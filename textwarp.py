@@ -12,6 +12,7 @@ from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
 from plugins.polygraph_3d import Polygraph3DPlugin
 from plugins.gui_3d import GUI3DPlugin
+from plugins.gui_2d import GUI2DPlugin
 from plugins.audio import AudioPlugin
 from plugins.network import NetworkPlugin
 from keybindings import KeyBindings
@@ -126,7 +127,7 @@ class TextAdventure:
         
         # Plugins
         self.plugins = []
-        self.initialize_plugins()
+        self.load_plugins()
         self.load_plugin_config()
 
         # Character cache to improve performance
@@ -138,12 +139,16 @@ class TextAdventure:
         # Initialize key bindings
         self.key_bindings = KeyBindings()
 
-    def initialize_plugins(self):
-        # Add plugins here
+    def load_plugins(self):
+        """Load plugins."""
+        self.plugins = []
         self.plugins.append(SnakePlugin(self))
         self.plugins.append(GraphClassifierPlugin(self))
         self.plugins.append(NetworkPlugin(self))
+        # Enable the 3D visualization plugin by default
         self.plugins.append(GUI3DPlugin(self))
+        # Keep the 2D visualization plugin as an alternative
+        self.plugins.append(GUI2DPlugin(self))
         self.plugins.append(Polygraph3DPlugin(self))
         self.plugins.append(AudioPlugin(self))  # Add the new AudioPlugin
         

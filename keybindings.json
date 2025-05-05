@@ -1,0 +1,22 @@
+{
+  "terminal_keys": {
+    "move_up": "259",
+    "move_down": "258",
+    "move_left": "260",
+    "move_right": "261",
+    "move_up_left": "55",
+    "move_up_right": "57",
+    "move_down_left": "49",
+    "move_down_right": "51",
+    "rotate_ccw": "113",
+    "rotate_cw": "101"
+  },
+  "gui_keys": {
+    "move_forward": "1073741906",
+    "move_backward": "1073741905",
+    "strafe_left": "113",
+    "strafe_right": "101",
+    "rotate_ccw": "1073741904",
+    "rotate_cw": "1073741903"
+  }
+}

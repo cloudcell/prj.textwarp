@@ -46,6 +46,15 @@ class AudioPlugin(Plugin):
         # Load settings if they exist
         self.load_settings()
         
+        # Initialize pygame mixer if not already initialized
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(self.sample_rate, -16, 2, self.buffer_size)
+            self.initialized = True
+        except Exception as e:
+            print(f"Error initializing audio mixer: {e}")
+            self.initialized = False
+        
     @property
     def name(self):
         """Return the name of the plugin."""
@@ -55,38 +64,25 @@ class AudioPlugin(Plugin):
         """Activate the plugin."""
         super().activate()
         
-        # Initialize pygame mixer if not already initialized
-        if not self.initialized:
-            try:
-                if not pygame.mixer.get_init():
-                    pygame.mixer.init(self.sample_rate, -16, 2, self.buffer_size)
-                self.initialized = True
-                
-                # Set up audio capture for visualization
-                pygame.mixer.set_num_channels(8)
-                
-                # Scan for music files
-                self.refresh_playlist()
-                
-                # Start playing if play_on_start is enabled
-                if self.play_on_start and self.playlist:
-                    # If we have a last played track, use that
-                    if self.last_played_track and os.path.exists(self.last_played_track) and self.last_played_track in self.playlist:
-                        self.play(self.last_played_track)
-                        track_name = os.path.basename(self.last_played_track)
-                        self.game.message = f"Resuming: {track_name}"
-                        self.game.message_timeout = 3.0
-                    else:
-                        # Otherwise play a random track
-                        self.play_random()
+        # Scan for music files
+        self.refresh_playlist()
+        
+        # Start playing if play_on_start is enabled
+        if self.play_on_start and self.playlist:
+            # If we have a last played track, use that
+            if self.last_played_track and os.path.exists(self.last_played_track) and self.last_played_track in self.playlist:
+                self.play(self.last_played_track)
+                track_name = os.path.basename(self.last_played_track)
+                self.game.message = f"Resuming: {track_name}"
+                self.game.message_timeout = 3.0
+            else:
+                # Otherwise play a random track
+                self.play_random()
                     
-                # Start a thread for audio analysis
-                self.analysis_thread = threading.Thread(target=self.analyze_audio_thread, daemon=True)
-                self.analysis_thread.start()
-            except Exception as e:
-                # Don't show error message to avoid cluttering the UI
-                self.initialized = False
-                
+        # Start a thread for audio analysis
+        self.analysis_thread = threading.Thread(target=self.analyze_audio_thread, daemon=True)
+        self.analysis_thread.start()
+        
     def deactivate(self):
         """Deactivate the plugin."""
         if self.initialized and pygame.mixer.music.get_busy():

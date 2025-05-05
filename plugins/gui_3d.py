@@ -73,74 +73,75 @@ class GUI3DPlugin(Plugin):
     def __init__(self, game):
         """Initialize the plugin."""
         super().__init__(game)
+        self.active = True
         # Don't set self.name here since it's a property
-        self.description = "Provides a 3D visualization of the game world."
-        self.active = False
-        self.running = False
-        self.gui_thread = None
+        self.description = "3D visualization of the game world"
+        self.version = "1.0"
+        self.author = "TextWarp Team"
         
-        # Initialize key bindings
-        self.key_bindings = KeyBindings()
+        # Visualization settings
+        self.width = 800
+        self.height = 600
+        self.window_width = 800
+        self.window_height = 600
+        
+        # Border information for limited rendering
+        self.border_left = 0
+        self.border_right = 0
+        self.border_top = 0
+        self.border_bottom = 0
+        self.has_border_info = False
         
         # Camera settings
-        self.rotation_x = 30.0
-        self.rotation_y = 0.0
-        self.rotation_z = 0.0
-        self.zoom = -50.0
+        self.camera_x = 0
+        self.camera_y = 10
+        self.camera_z = 0
+        self.rotation_x = 30  # Look down 30 degrees
+        self.rotation_y = 0
+        self.zoom = 10
+        self.camera_move_speed = 0.5
         
-        # Camera movement properties
-        self.camera_direction = [0, 0, 1]  # Forward vector (z-axis)
-        self.camera_right = [1, 0, 0]      # Right vector (x-axis)
-        self.camera_up = [0, 1, 0]         # Up vector (y-axis)
-        self.movement_speed = 1.0          # Movement speed
-        self.camera_move_speed = 1.0       # For backward compatibility
-        self.rotation_speed = 2.0          # Rotation speed in degrees
-        self.handle_3d_input = True        # Whether to handle keyboard input in 3D view
-        
-        # New camera variables
-        self.camera_x = 0.0
-        self.camera_y = 10.0
-        self.camera_z = 30.0
-        self.camera_pitch = -20.0
-        self.camera_yaw = 0.0
-        self.camera_move_speed = 1.0  # Speed for camera movement
-        
-        self.window = None
-        self.characters = {}  # 3D character objects
-        self.last_mouse_pos = None
+        # Mouse interaction
         self.dragging = False
-        self.font_texture = None
-        self.char_textures = {}
-        self.lock = threading.Lock()  # Lock for thread safety
-        self.snakes = []  # List to store snake data for connected rendering
-        self.debug_messages = []  # List to store debug messages
-        self.max_debug_messages = 5  # Maximum number of debug messages to display
+        self.last_mouse_pos = None
         
-        # Display options
-        self.show_letters = True
-        self.show_sticks = True
-        self.show_dots_without_sticks = False
-        self.show_mesh = True
-        self.show_terrain_mesh = True
-        self.show_zero_level_grid = True  # Show a grid at zero height level
-        self.ascii_intensity = True  # Adjust dot intensity based on ASCII value
-        self.ascii_height = False  # Use ASCII value to determine height
-        self.terrain_mesh_style = "filled"  # Options: "filled", "wireframe"
-        self.terrain_mesh_opacity = 0.7  # 0.0 to 1.0
-        self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
-        self.stick_dot_size = 8.0  # Size of dots at the end of sticks
-        self.show_snake_connections = True  # New option to show snakes as connected balls
-        self.render_distance = 100  # New option to control how far to render
-        self.show_axes = True  # New option to show or hide the 3D axes
-        
-        # Fullscreen toggle variables
-        self.fullscreen = False
+        # Fullscreen state
+        self.is_fullscreen = False
         self.pre_fullscreen_size = (800, 600)
-        self.double_click_time = 0.5  # Time window for double click in seconds
-        self.last_click_time = 0  # Time of the last click
+        self.original_fullscreen = False
+        
+        # Character map
+        self.character_map = []
+        self.characters = {}
+        self.snakes = []
+        
+        # Debug messages
+        self.debug_messages = []
+        self.max_debug_messages = 20  # Maximum number of debug messages to store
+        
+        # Thread safety
+        self.lock = threading.Lock()  # Lock for thread safety
+        
+        # Control settings
+        self.handle_3d_input = True
+        
+        # Terrain visualization settings
+        self.show_dots_without_sticks = True
+        self.stick_dot_size = 5.0
+        self.terrain_mesh_style = "solid"  # "wireframe" or "solid"
+        self.terrain_mesh_opacity = 0.7
+        self.terrain_color_scheme = "height"  # "height", "viridis", "plasma", etc.
+        self.show_terrain_mesh = True
+        self.show_snakes = True
         
         # Load settings if they exist
         self.load_settings()
+        
+        # Start the GUI thread
+        self.running = True
+        self.gui_thread = threading.Thread(target=self.run_gui)
+        self.gui_thread.daemon = True
+        self.gui_thread.start()
         
     @property
     def name(self):
@@ -253,88 +254,129 @@ class GUI3DPlugin(Plugin):
             return
             
         try:
-            # Add a small delay to ensure the terminal has fully rendered everything
-            time.sleep(0.05)
-            
             # Get the screen dimensions
             max_y, max_x = self.game.screen.getmaxyx()
             
-            # Define rendering boundaries
-            # Leave space for coordinate notches (3 columns on left, 6 rows at top)
-            notch_left_margin = 3
-            notch_top_margin = 6
+            # Clear the character map
+            with self.lock:
+                self.character_map = []
+                self.characters = {}
+                
+            # Get the player's position
+            player_x = self.game.player_x
+            player_y = self.game.player_y
             
-            # Reserve 12 lines at the bottom for admin info
-            bottom_margin = 12
+            # Get the border information if we haven't already
+            if not self.has_border_info:
+                # Find the border by looking for box drawing characters
+                for y in range(max_y):
+                    for x in range(max_x):
+                        try:
+                            char = chr(self.game.screen.inch(y, x) & 0xFF)
+                            if char in "╔═╗║╚╝":
+                                if self.border_top == 0 and char in "╔═╗":
+                                    self.border_top = y
+                                if self.border_left == 0 and char in "╔║╚":
+                                    self.border_left = x
+                                if y > self.border_bottom and char in "╚═╝":
+                                    self.border_bottom = y
+                                if x > self.border_right and char in "╗║╝":
+                                    self.border_right = x
+                        except:
+                            pass
+                
+                # If we found a border, mark that we have the info
+                if self.border_top > 0 and self.border_left > 0 and self.border_bottom > 0 and self.border_right > 0:
+                    self.has_border_info = True
+                    self.add_debug_message(f"Border detected: T:{self.border_top} L:{self.border_left} B:{self.border_bottom} R:{self.border_right}")
             
-            # Calculate the actual rendering area
-            render_top = notch_top_margin
-            render_bottom = max_y - bottom_margin
-            render_left = notch_left_margin
-            render_right = max_x - 2
-            
-            # Create a new character map
-            new_character_map = {}
-            
-            # Get the player position
-            player_x = self.game.world_x
-            player_y = self.game.world_y
-            
-            # Get the half width and height
-            half_width = max_x // 2
-            half_height = max_y // 2
-            
-            # Clear the snake list for this update
+            # Process snakes separately to avoid OpenGL errors
             with self.lock:
                 self.snakes = []
             
             # Process snakes in the text map only, not in 3D visualization
-            # This ensures snakes are visible in the text map but won't cause OpenGL errors
+            # This ensures snakes are visible in the text map but won't cause pygame errors
             
             # Iterate through the screen within the defined rendering boundaries
-            for y in range(render_top, render_bottom):
-                for x in range(render_left, render_right):
-                    # Try to get the character at this position
+            render_top = self.border_top + 1 if self.has_border_info else 0
+            render_bottom = self.border_bottom - 1 if self.has_border_info else max_y - 1
+            render_left = self.border_left + 1 if self.has_border_info else 0
+            render_right = self.border_right - 1 if self.has_border_info else max_x - 1
+            
+            for y in range(render_top, render_bottom + 1):
+                row = []
+                for x in range(render_left, render_right + 1):
                     try:
-                        # Get the character and its attributes
-                        char = self.game.screen.inch(y, x)
-                        
-                        # Extract the character and attributes
-                        char_value = chr(char & 0xFF)
-                        attr = char & curses.A_ATTRIBUTES
+                        # Get the character at this position
+                        char_int = self.game.screen.inch(y, x)
+                        char = chr(char_int & 0xFF)
                         
                         # Skip empty spaces
-                        if char_value == ' ':
+                        if char == " ":
+                            row.append(None)
                             continue
                             
-                        # Calculate render coordinates (relative to viewport)
-                        # The render coordinates are centered around (0,0)
-                        render_x = x - half_width
-                        render_y = y - half_height
+                        # Get color information
+                        color_pair = (char_int & curses.A_COLOR) >> 8
                         
-                        # Create a character object
-                        char_obj = Character3D(char_value, render_x, render_y)
+                        # Calculate world coordinates
+                        world_x = x - player_x
+                        world_z = y - player_y
                         
-                        # Add height based on ASCII value if enabled
-                        if self.ascii_height:
-                            char_obj.height = ord(char_value) / 32.0  # Scale height
-                        else:
-                            char_obj.height = 1.0  # Default height
+                        # Determine height based on ASCII value
+                        world_y = ord(char) / 50.0  # Scale the height
+                        
+                        # Check if this is a snake character
+                        is_snake = False
+                        if char in "~^*":
+                            is_snake = True
+                            # Add to snakes list for special rendering
+                            snake_segment = {
+                                "x": world_x,
+                                "y": world_y,
+                                "z": world_z,
+                                "char": char,
+                                "color": color_pair
+                            }
                             
-                        # Add to the character map using render coordinates
-                        new_character_map[(render_x, render_y)] = char_obj
+                            # Find or create a snake for this segment
+                            found_snake = False
+                            for snake in self.snakes:
+                                # Check if this segment is adjacent to any segment in the snake
+                                for segment in snake:
+                                    if (abs(segment["x"] - world_x) <= 1 and abs(segment["z"] - world_z) <= 1):
+                                        snake.append(snake_segment)
+                                        found_snake = True
+                                        break
+                                if found_snake:
+                                    break
+                                    
+                            if not found_snake:
+                                # Create a new snake
+                                self.snakes.append([snake_segment])
                         
-                    except:
-                        # Ignore errors from reading from the screen
-                        pass
-            
-            # Update the character map
-            with self.lock:
-                self.characters = new_character_map
+                        # Add to character map
+                        char_info = {
+                            "char": char,
+                            "x": world_x,
+                            "y": world_y,
+                            "z": world_z,
+                            "color": color_pair,
+                            "is_snake": is_snake
+                        }
+                        row.append(char_info)
+                        
+                        # Add to characters dictionary for quick lookup
+                        key = f"{world_x},{world_z}"
+                        self.characters[key] = char_info
+                    except Exception as e:
+                        row.append(None)
+                        
+                self.character_map.append(row)
                 
         except Exception as e:
-            # Log the error but don't crash
-            self.add_debug_message(f"Error updating character map: {e}")
+            self.add_debug_message(f"Error updating character map: {str(e)}")
+            traceback.print_exc()
     
     def get_color_for_char(self, char, x, y):
         """Get the color for a character."""
@@ -573,255 +615,454 @@ class GUI3DPlugin(Plugin):
     def run_gui(self):
         """Run the 3D GUI in a separate thread."""
         try:
-            # Initialize pygame
-            pygame.init()
+            # Initialize pygame only if it hasn't been initialized already
+            if not pygame.get_init():
+                pygame.init()
             
-            # Create a window
-            display = (800, 600)
-            pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
-            pygame.display.set_caption("TextWarp 3D Visualization")
+            # Initialize GLUT
+            glutInit()
             
-            # Set up the OpenGL environment
+            # Create the window with OpenGL support
+            self.screen = pygame.display.set_mode(
+                (self.width, self.height),
+                pygame.OPENGL | pygame.DOUBLEBUF
+            )
+            
+            pygame.display.set_caption("TextWarp Snake Visualization (3D)")
+            
+            # Initialize font
+            self.font = pygame.font.Font(None, 24)
+            
+            # Set up OpenGL
+            glViewport(0, 0, self.width, self.height)
+            glMatrixMode(GL_PROJECTION)
+            glLoadIdentity()
+            gluPerspective(45, (self.width / self.height), 0.1, 50.0)
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
             glEnable(GL_DEPTH_TEST)
+            
+            # Set up lighting
             glEnable(GL_LIGHTING)
             glEnable(GL_LIGHT0)
             glEnable(GL_COLOR_MATERIAL)
             glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
             
-            # Set up the light
-            glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
-            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1))
-            glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.8, 0.8, 0.8, 1))
-            
-            # Set up the projection matrix with a wider field of view and greater depth range
-            glMatrixMode(GL_PROJECTION)
-            glLoadIdentity()
-            gluPerspective(60, (800/600), 0.1, 200.0)  # Increased FOV and far clipping plane
+            # Set light position
+            light_position = [5.0, 5.0, 5.0, 1.0]
+            glLightfv(GL_LIGHT0, GL_POSITION, light_position)
             
             # Main loop
+            self.running = True
             clock = pygame.time.Clock()
+            
             while self.running:
-                # Handle events
+                # Process events
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
+                    elif event.type == pygame.KEYDOWN:
+                        self.handle_key_down(event)
+                    elif event.type == pygame.KEYUP:
+                        self.handle_key_up(event)
                     elif event.type == pygame.MOUSEBUTTONDOWN:
-                        if event.button == 1:  # Left mouse button
-                            self.dragging = True
-                            self.last_mouse_pos = pygame.mouse.get_pos()
-                        elif event.button == 4:  # Scroll up
-                            self.zoom += 1.0  # Increased zoom step for larger distances
-                        elif event.button == 5:  # Scroll down
-                            self.zoom -= 1.0  # Increased zoom step for larger distances
+                        self.handle_mouse_button_down(event)
                     elif event.type == pygame.MOUSEBUTTONUP:
-                        if event.button == 1:  # Left mouse button
-                            self.dragging = False
+                        self.handle_mouse_button_up(event)
                     elif event.type == pygame.MOUSEMOTION:
-                        if self.dragging:
-                            x, y = pygame.mouse.get_pos()
-                            if self.last_mouse_pos:
-                                dx = x - self.last_mouse_pos[0]
-                                dy = y - self.last_mouse_pos[1]
-                                self.rotation_y += dx * 0.5
-                                self.rotation_x += dy * 0.5
-                            self.last_mouse_pos = (x, y)
+                        self.handle_mouse_motion(event)
                 
-                # Handle keyboard input for camera-relative movement
-                if self.handle_3d_input:
-                    self.handle_camera_movement()
-                
-                # Render the scene using our dedicated method
+                # Render the scene
                 self.render_scene()
                 
-                # Limit the frame rate
-                clock.tick(60)
-                
+                # Cap the frame rate
+                clock.tick(30)
+            
+            # Clean up - don't quit pygame as other plugins might be using it
+            # pygame.quit()
         except Exception as e:
-            self.add_debug_message(f"Error in GUI thread: {e}")
+            self.add_debug_message(f"Error in GUI thread: {str(e)}")
             traceback.print_exc()
-            self.running = False
-    
-    def handle_camera_movement(self):
-        """Handle keyboard input for camera-relative movement."""
-        try:
-            # Get pressed keys
-            keys = pygame.key.get_pressed()
-            
-            # Calculate movement speed based on frame time
-            speed = self.camera_move_speed * 0.1  # Adjust as needed
-            
-            # Calculate forward vector based on camera rotation
-            forward_x = math.sin(math.radians(self.rotation_y)) * math.cos(math.radians(self.rotation_x))
-            forward_y = math.sin(math.radians(self.rotation_x))
-            forward_z = math.cos(math.radians(self.rotation_y)) * math.cos(math.radians(self.rotation_x))
-            
-            # Calculate right vector (perpendicular to forward and up)
-            right_x = math.sin(math.radians(self.rotation_y + 90))
-            right_y = 0
-            right_z = math.cos(math.radians(self.rotation_y + 90))
-            
-            # Normalize vectors
-            forward_length = math.sqrt(forward_x**2 + forward_y**2 + forward_z**2)
-            if forward_length > 0:
-                forward_x /= forward_length
-                forward_y /= forward_length
-                forward_z /= forward_length
-                
-            right_length = math.sqrt(right_x**2 + right_y**2 + right_z**2)
-            if right_length > 0:
-                right_x /= right_length
-                right_y /= right_length
-                right_z /= right_length
-            
-            # Handle movement keys
-            if keys[pygame.K_w]:  # Forward
-                self.camera_x += forward_x * speed
-                self.camera_y += forward_y * speed
-                self.camera_z += forward_z * speed
-            if keys[pygame.K_s]:  # Backward
-                self.camera_x -= forward_x * speed
-                self.camera_y -= forward_y * speed
-                self.camera_z -= forward_z * speed
-            if keys[pygame.K_a]:  # Left
-                self.camera_x -= right_x * speed
-                self.camera_y -= right_y * speed
-                self.camera_z -= right_z * speed
-            if keys[pygame.K_d]:  # Right
-                self.camera_x += right_x * speed
-                self.camera_y += right_y * speed
-                self.camera_z += right_z * speed
-            if keys[pygame.K_SPACE]:  # Up
-                self.camera_y += speed
-            if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:  # Down
-                self.camera_y -= speed
-                
-            # Handle rotation keys
-            if keys[pygame.K_LEFT]:
-                self.rotation_y -= speed * 10
-            if keys[pygame.K_RIGHT]:
-                self.rotation_y += speed * 10
-            if keys[pygame.K_UP]:
-                self.rotation_x -= speed * 10
-                # Clamp pitch to prevent flipping
-                self.rotation_x = max(-89.0, min(89.0, self.rotation_x))
-            if keys[pygame.K_DOWN]:
-                self.rotation_x += speed * 10
-                # Clamp pitch to prevent flipping
-                self.rotation_x = max(-89.0, min(89.0, self.rotation_x))
-                
-        except Exception as e:
-            self.add_debug_message(f"Camera movement error: {e}")
     
     def render_scene(self):
-        """Render a placeholder scene to avoid OpenGL errors."""
+        """Render the 3D scene."""
         try:
-            # Clear the screen 
+            # Clear the screen
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            glClearColor(0.0, 0.0, 0.0, 1.0)
-            
-            # Set up a simple 2D rendering mode
-            glMatrixMode(GL_PROJECTION)
-            glLoadIdentity()
-            glOrtho(0, self.width, self.height, 0, -1, 1)
-            
-            glMatrixMode(GL_MODELVIEW)
             glLoadIdentity()
             
-            # Draw a simple message
-            self.render_text(10, 10, "3D Visualization Disabled - Snakes visible in text map")
-            self.render_text(10, 30, f"Snakes Detected: {self.get_snake_count()}")
+            # Set up the camera
+            gluLookAt(
+                self.camera_x, self.camera_y, self.camera_z,  # Camera position
+                self.camera_x, 0, self.camera_z - 10,  # Look at point
+                0, 1, 0  # Up vector
+            )
             
-            # Draw debug info
-            y_pos = 50
-            for msg in self.debug_messages[-10:]:  # Show last 10 messages
-                self.render_text(10, y_pos, msg)
-                y_pos += 20
+            # Apply camera rotation
+            glRotatef(self.rotation_x, 1, 0, 0)
+            glRotatef(self.rotation_y, 0, 1, 0)
             
-            # Swap the buffers
+            # Draw a grid for reference
+            self.draw_grid()
+            
+            # Draw the characters
+            with self.lock:
+                for row in self.character_map:
+                    for char_info in row:
+                        if char_info is not None:
+                            self.draw_character(char_info)
+                
+                # Draw snakes
+                if self.show_snakes:
+                    for snake in self.snakes:
+                        self.draw_snake(snake)
+            
+            # Swap the buffers to display what we just drew
             pygame.display.flip()
             
         except Exception as e:
-            # Just silently fail - we don't want to spam the console
-            pass
+            self.add_debug_message(f"Error rendering scene: {str(e)}")
+            traceback.print_exc()
+            
+    def draw_grid(self):
+        """Draw a reference grid."""
+        glBegin(GL_LINES)
+        
+        # Draw grid lines
+        grid_size = 20
+        grid_step = 1
+        
+        glColor3f(0.2, 0.2, 0.2)  # Dark gray
+        
+        for i in range(-grid_size, grid_size + 1, grid_step):
+            # X axis lines
+            glVertex3f(i, 0, -grid_size)
+            glVertex3f(i, 0, grid_size)
+            
+            # Z axis lines
+            glVertex3f(-grid_size, 0, i)
+            glVertex3f(grid_size, 0, i)
+            
+        glEnd()
+        
+        # Draw coordinate axes
+        glBegin(GL_LINES)
+        
+        # X axis (red)
+        glColor3f(1.0, 0.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(5, 0, 0)
+        
+        # Y axis (green)
+        glColor3f(0.0, 1.0, 0.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 5, 0)
+        
+        # Z axis (blue)
+        glColor3f(0.0, 0.0, 1.0)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 5)
+        
+        glEnd()
+        
+        # Draw a plane for the ground
+        glBegin(GL_QUADS)
+        glColor3f(0.1, 0.3, 0.2)  # Dark green-blue for the ground
+        glVertex3f(-grid_size, 0, -grid_size)
+        glVertex3f(-grid_size, 0, grid_size)
+        glVertex3f(grid_size, 0, grid_size)
+        glVertex3f(grid_size, 0, -grid_size)
+        glEnd()
+        
+    def draw_character(self, char_info):
+        """Draw a character in 3D space."""
+        if not char_info:
+            return
+            
+        x = char_info["x"]
+        y = char_info["y"]
+        z = char_info["z"]
+        char = char_info["char"]
+        color_pair = char_info["color"]
+        is_snake = char_info["is_snake"]
+        
+        # Skip drawing snakes here, they're drawn separately
+        if is_snake:
+            return
+            
+        # Set color based on color pair
+        if color_pair == 1:  # Default
+            glColor3f(1.0, 1.0, 1.0)  # White
+        elif color_pair == 2:  # Red
+            glColor3f(1.0, 0.0, 0.0)  # Red
+        elif color_pair == 3:  # Green
+            glColor3f(0.0, 1.0, 0.0)  # Green
+        elif color_pair == 4:  # Yellow
+            glColor3f(1.0, 1.0, 0.0)  # Yellow
+        elif color_pair == 5:  # Blue
+            glColor3f(0.0, 0.0, 1.0)  # Blue
+        elif color_pair == 6:  # Magenta
+            glColor3f(1.0, 0.0, 1.0)  # Magenta
+        elif color_pair == 7:  # Cyan
+            glColor3f(0.0, 1.0, 1.0)  # Cyan
+        else:
+            glColor3f(0.7, 0.7, 0.7)  # Light gray
+            
+        # Draw a cube for the character
+        glPushMatrix()
+        glTranslatef(x, y, z)
+        glutSolidCube(0.5)
+        glPopMatrix()
+        
+    def draw_snake(self, snake):
+        """Draw a snake in 3D space."""
+        if not snake:
+            return
+            
+        # Draw each segment
+        segments = snake.segments if hasattr(snake, 'segments') else snake
+        for i, segment in enumerate(segments):
+            try:
+                # Handle different segment formats
+                if isinstance(segment, dict):
+                    x, y = segment.get('x', 0), segment.get('y', 0)
+                elif isinstance(segment, (list, tuple)) and len(segment) >= 2:
+                    x, y = segment[0], segment[1]
+                else:
+                    continue  # Skip invalid segments
+                
+                z = 0.3  # Slightly above the ground
+                
+                glPushMatrix()
+                glTranslatef(x, z, y)  # Note: y and z are swapped in OpenGL
+                
+                # Head is red
+                if i == 0:
+                    glColor3f(1.0, 0.0, 0.0)  # Red
+                # Tail/rattle is yellow
+                elif i == len(segments) - 1:
+                    glColor3f(1.0, 1.0, 0.0)  # Yellow
+                # Body is dark blue (as per user memory)
+                else:
+                    glColor3f(0.0, 0.0, 0.5)  # Dark blue
+                    
+                # Draw a sphere for each segment
+                glutSolidSphere(0.3, 8, 8)
+                
+                glPopMatrix()
+                
+                # Draw connections between segments
+                if i > 0:
+                    # Get previous segment
+                    prev_segment = segments[i-1]
+                    if isinstance(prev_segment, dict):
+                        prev_x, prev_y = prev_segment.get('x', 0), prev_segment.get('y', 0)
+                    elif isinstance(prev_segment, (list, tuple)) and len(prev_segment) >= 2:
+                        prev_x, prev_y = prev_segment[0], prev_segment[1]
+                    else:
+                        continue
+                    
+                    prev_z = 0.3  # Slightly above the ground
+                    
+                    glColor3f(0.0, 0.0, 0.4)  # Darker blue for connections
+                    
+                    glBegin(GL_LINES)
+                    glVertex3f(prev_x, prev_z, prev_y)  # Note: y and z are swapped in OpenGL
+                    glVertex3f(x, z, y)  # Note: y and z are swapped in OpenGL
+                    glEnd()
+            except Exception as e:
+                self.add_debug_message(f"Error drawing snake segment: {str(e)}")
     
-    def render_text(self, x, y, text):
-        """Render text using pygame instead of OpenGL to avoid errors."""
+    def handle_key_event(self, event):
+        """Handle keyboard events."""
         try:
-            # Create a font object if not already created
-            if not hasattr(self, 'font'):
-                self.font = pygame.font.Font(None, 24)
-            
-            # Render the text
-            text_surface = self.font.render(text, True, (255, 255, 255))
-            
-            # Convert the surface to a string of bytes
-            text_data = pygame.image.tostring(text_surface, "RGBA", True)
-            
-            # Create a texture
-            texture = glGenTextures(1)
-            glBindTexture(GL_TEXTURE_2D, texture)
-            
-            # Set texture parameters
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            
-            # Upload the texture data
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, text_surface.get_width(), text_surface.get_height(), 
-                         0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
-            
-            # Enable texturing
-            glEnable(GL_TEXTURE_2D)
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            
-            # Draw a textured quad
-            glBegin(GL_QUADS)
-            glTexCoord2f(0, 0); glVertex2f(x, y)
-            glTexCoord2f(1, 0); glVertex2f(x + text_surface.get_width(), y)
-            glTexCoord2f(1, 1); glVertex2f(x + text_surface.get_width(), y + text_surface.get_height())
-            glTexCoord2f(0, 1); glVertex2f(x, y + text_surface.get_height())
-            glEnd()
-            
-            # Disable texturing
-            glDisable(GL_TEXTURE_2D)
-            glDisable(GL_BLEND)
-            
-            # Delete the texture
-            glDeleteTextures(1, [texture])
+            if event.key == pygame.K_ESCAPE:
+                self.running = False
+            elif event.key == pygame.K_f:
+                self.toggle_fullscreen()
+            # Forward WASD keys to the game for player movement
+            elif event.key in [pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d]:
+                self.forward_key_to_game(event.key)
             
         except Exception as e:
-            # Just silently fail - we don't want to spam the console
-            pass
+            self.add_debug_message(f"Error handling key event: {e}")
     
-    def get_snake_count(self):
-        """Get the count of snakes in the game."""
+    def forward_key_to_game(self, key):
+        """Forward key presses to the main game for player movement."""
         try:
-            for plugin in self.game.plugins:
-                if hasattr(plugin, 'snakes') and plugin.active:
-                    return len(plugin.snakes)
-            return 0
-        except:
-            return 0
+            # Map pygame keys to curses keys
+            key_map = {
+                pygame.K_w: curses.KEY_UP,
+                pygame.K_a: curses.KEY_LEFT,
+                pygame.K_s: curses.KEY_DOWN,
+                pygame.K_d: curses.KEY_RIGHT
+            }
             
-    def check_for_snakes(self):
-        """Simplified method to ensure snakes are visible in the text map."""
-        # Find the snake plugin
-        snake_plugin = None
-        for plugin in self.game.plugins:
-            if hasattr(plugin, 'snakes') and plugin.active:
-                snake_plugin = plugin
-                break
-        
-        # If we found a snake plugin, create a test snake if there are none
-        if snake_plugin and hasattr(snake_plugin, 'snakes') and not snake_plugin.snakes:
-            # Create a test snake near the player
-            try:
-                test_snake = TestSnake(self.game, self.game.world_x + 5, self.game.world_y + 5)
-                snake_plugin.snakes.append(test_snake)
-                self.add_debug_message(f"Created test snake at ({test_snake.x}, {test_snake.y})")
-            except Exception as e:
-                self.add_debug_message(f"Error creating test snake: {e}")
+            if key in key_map:
+                # Get the corresponding curses key
+                curses_key = key_map[key]
+                
+                # Call the game's handle_input method with this key
+                if hasattr(self.game, 'handle_input'):
+                    # Use threading to avoid blocking the pygame event loop
+                    threading.Thread(
+                        target=self.game.handle_input,
+                        args=(curses_key,),
+                        daemon=True
+                    ).start()
+                    
+                    # Add a debug message
+                    direction = {
+                        curses.KEY_UP: "up",
+                        curses.KEY_LEFT: "left",
+                        curses.KEY_DOWN: "down",
+                        curses.KEY_RIGHT: "right"
+                    }.get(curses_key, "unknown")
+                    
+                    self.add_debug_message(f"Sent {direction} command to game")
+                
+        except Exception as e:
+            self.add_debug_message(f"Error forwarding key to game: {e}")
     
+    def handle_mouse_button_down(self, event):
+        """Handle mouse button down events."""
+        try:
+            if event.button == 1:  # Left mouse button
+                self.dragging = True
+                self.last_mouse_pos = pygame.mouse.get_pos()
+            elif event.button == 3:  # Right mouse button
+                # Toggle fullscreen on right-click
+                self.toggle_fullscreen()
+            elif event.button == 4:  # Scroll up
+                # Zoom in functionality could be implemented here
+                pass
+            elif event.button == 5:  # Scroll down
+                # Zoom out functionality could be implemented here
+                pass
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling mouse button down: {e}")
+    
+    def handle_mouse_button_up(self, event):
+        """Handle mouse button up events."""
+        try:
+            if hasattr(self, 'dragging') and self.dragging:
+                self.dragging = False
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling mouse button up: {e}")
+    
+    def handle_mouse_motion(self, event):
+        """Handle mouse motion events."""
+        try:
+            if hasattr(self, 'dragging') and self.dragging:
+                x, y = pygame.mouse.get_pos()
+                if hasattr(self, 'last_mouse_pos') and self.last_mouse_pos:
+                    dx = x - self.last_mouse_pos[0]
+                    dy = y - self.last_mouse_pos[1]
+                    # Use dx and dy for dragging functionality
+                    # For example, panning the 3D map view
+                self.last_mouse_pos = (x, y)
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling mouse motion: {e}")
+
+    def handle_key_down(self, event):
+        """Handle key down events."""
+        try:
+            # Check if we should handle this key
+            if not self.handle_3d_input:
+                return
+                
+            # Handle key presses
+            if event.key == pygame.K_ESCAPE:
+                # Exit fullscreen mode if in fullscreen
+                if self.is_fullscreen:
+                    self.toggle_fullscreen()
+                # Otherwise, quit the GUI
+                else:
+                    self.running = False
+            elif event.key == pygame.K_F11 or (event.key == pygame.K_RETURN and event.mod & pygame.KMOD_ALT):
+                # Toggle fullscreen
+                self.toggle_fullscreen()
+            
+            # Camera controls
+            elif event.key == pygame.K_UP or event.key == pygame.K_w:
+                # Forward key - move forward in the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('w')
+            elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
+                # Backward key - move backward from the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('s')
+            elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
+                # Left key - move left from the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('a')
+            elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
+                # Right key - move right from the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('d')
+            elif event.key == pygame.K_PAGEUP:
+                # Move up
+                self.camera_y += self.camera_move_speed
+            elif event.key == pygame.K_PAGEDOWN:
+                # Move down
+                self.camera_y -= self.camera_move_speed
+            elif event.key == pygame.K_HOME:
+                # Reset camera position
+                self.camera_x = 0
+                self.camera_y = 10
+                self.camera_z = 0
+                self.rotation_x = 30
+                self.rotation_y = 0
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling key down: {str(e)}")
+            
+    def handle_key_up(self, event):
+        """Handle key up events."""
+        try:
+            # Check if we should handle this key
+            if not self.handle_3d_input:
+                return
+                
+            # Handle key releases
+            pass
+            
+        except Exception as e:
+            self.add_debug_message(f"Error handling key up: {str(e)}")
+            
+    def toggle_fullscreen(self):
+        """Toggle fullscreen mode."""
+        try:
+            # Toggle fullscreen flag
+            self.is_fullscreen = not self.is_fullscreen
+            
+            # Remember current size if going to fullscreen
+            if self.is_fullscreen:
+                self.pre_fullscreen_size = pygame.display.get_surface().get_size()
+                
+            # Set new display mode - always use regular pygame (no OpenGL)
+            flags = pygame.FULLSCREEN if self.is_fullscreen else 0
+            flags |= pygame.DOUBLEBUF
+                
+            # Create new screen
+            self.screen = pygame.display.set_mode(
+                (0, 0) if self.is_fullscreen else self.pre_fullscreen_size,
+                flags
+            )
+                
+            # Update width and height
+            self.width, self.height = pygame.display.get_surface().get_size()
+            
+        except Exception as e:
+            self.add_debug_message(f"Error toggling fullscreen: {e}")
+
     def load_settings(self):
         """Load display settings from a file."""
         try:
@@ -1460,30 +1701,32 @@ class GUI3DPlugin(Plugin):
         if len(self.snakes) > 0:
             for i in range(min(3, len(self.snakes))):
                 if hasattr(self.snakes[i], 'body'):
-                    debug_info += f" Snake {i} has {len(self.snakes[i].body)} segments"
+                    debug_info += f" Snake {i+1} has {len(self.snakes[i].body)} segments"
                 
         return debug_info
     
     def toggle_fullscreen(self):
         """Toggle between fullscreen and windowed mode."""
         try:
-            self.fullscreen = not self.fullscreen
+            # Toggle fullscreen flag
+            self.is_fullscreen = not self.is_fullscreen
             
-            if self.fullscreen:
+            # Remember current size if going to fullscreen
+            if self.is_fullscreen:
                 # Save current window size before going fullscreen
                 self.pre_fullscreen_size = pygame.display.get_surface().get_size()
                 
                 # Set to fullscreen mode
                 self.window = pygame.display.set_mode(
                     (0, 0),  # Use current desktop resolution
-                    DOUBLEBUF | OPENGL | pygame.FULLSCREEN
+                    DOUBLEBUF | pygame.FULLSCREEN
                 )
                 self.add_debug_message("Switched to fullscreen mode")
             else:
                 # Restore previous window size
                 self.window = pygame.display.set_mode(
                     self.pre_fullscreen_size,
-                    DOUBLEBUF | OPENGL
+                    DOUBLEBUF
                 )
                 self.add_debug_message("Switched to windowed mode")
                 
@@ -1491,463 +1734,217 @@ class GUI3DPlugin(Plugin):
             width, height = pygame.display.get_surface().get_size()
             aspect_ratio = width / height if height > 0 else 1.0
             
-            glMatrixMode(GL_PROJECTION)
-            glLoadIdentity()
-            gluPerspective(60, aspect_ratio, 0.1, self.draw_distance)
-            
             # Return to modelview matrix
-            glMatrixMode(GL_MODELVIEW)
+            # glMatrixMode(GL_MODELVIEW)
             
         except Exception as e:
             self.add_debug_message(f"Error toggling fullscreen: {e}")
     
-    def init_gl(self):
-        """Initialize OpenGL settings."""
+    def handle_key_event(self, event):
+        """Handle keyboard events."""
         try:
-            # Set up the OpenGL environment
-            glEnable(GL_DEPTH_TEST)
-            glEnable(GL_LIGHTING)
-            glEnable(GL_LIGHT0)
-            glEnable(GL_COLOR_MATERIAL)
-            glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+            if event.key == pygame.K_ESCAPE:
+                self.running = False
+            elif event.key == pygame.K_f:
+                self.toggle_fullscreen()
+            # Forward WASD keys to the game for player movement
+            elif event.key in [pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d]:
+                self.forward_key_to_game(event.key)
             
-            # Set up the light
-            glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
-            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1))
-            glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.8, 0.8, 0.8, 1))
-            
-            # Set up the projection matrix with a wider field of view and greater depth range
-            glMatrixMode(GL_PROJECTION)
-            glLoadIdentity()
-            gluPerspective(self.fov, (self.window_width/self.window_height), 0.1, self.draw_distance)
-            
-            # Initialize font texture if needed
-            if not hasattr(self, 'font_texture'):
-                self.init_font_texture()
-                
-            self.add_debug_message("OpenGL initialized successfully")
         except Exception as e:
-            self.add_debug_message(f"Error initializing OpenGL: {e}")
-
-    def draw_vertical_lines(self):
-        """Draw vertical lines (sticks) from ground to characters."""
+            self.add_debug_message(f"Error handling key event: {e}")
+    
+    def forward_key_to_game(self, key):
+        """Forward key presses to the main game for player movement."""
         try:
-            # Skip if no characters
-            if not self.characters:
+            # Map pygame keys to curses keys
+            key_map = {
+                pygame.K_w: curses.KEY_UP,
+                pygame.K_a: curses.KEY_LEFT,
+                pygame.K_s: curses.KEY_DOWN,
+                pygame.K_d: curses.KEY_RIGHT
+            }
+            
+            if key in key_map:
+                # Get the corresponding curses key
+                curses_key = key_map[key]
+                
+                # Call the game's handle_input method with this key
+                if hasattr(self.game, 'handle_input'):
+                    # Use threading to avoid blocking the pygame event loop
+                    threading.Thread(
+                        target=self.game.handle_input,
+                        args=(curses_key,),
+                        daemon=True
+                    ).start()
+                    
+                    # Add a debug message
+                    direction = {
+                        curses.KEY_UP: "up",
+                        curses.KEY_LEFT: "left",
+                        curses.KEY_DOWN: "down",
+                        curses.KEY_RIGHT: "right"
+                    }.get(curses_key, "unknown")
+                    
+                    self.add_debug_message(f"Sent {direction} command to game")
+                
+        except Exception as e:
+            self.add_debug_message(f"Error forwarding key to game: {e}")
+    
+    def handle_mouse_button_down(self, event):
+        """Handle mouse button down events."""
+        try:
+            if event.button == 1:  # Left mouse button
+                self.dragging = True
+                self.last_mouse_pos = pygame.mouse.get_pos()
+            elif event.button == 3:  # Right mouse button
+                # Toggle fullscreen on right-click
+                self.toggle_fullscreen()
+            elif event.button == 4:  # Scroll up
+                # Zoom in functionality could be implemented here
+                pass
+            elif event.button == 5:  # Scroll down
+                # Zoom out functionality could be implemented here
+                pass
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling mouse button down: {e}")
+    
+    def handle_mouse_button_up(self, event):
+        """Handle mouse button up events."""
+        try:
+            if hasattr(self, 'dragging') and self.dragging:
+                self.dragging = False
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling mouse button up: {e}")
+    
+    def handle_mouse_motion(self, event):
+        """Handle mouse motion events."""
+        try:
+            if hasattr(self, 'dragging') and self.dragging:
+                x, y = pygame.mouse.get_pos()
+                if hasattr(self, 'last_mouse_pos') and self.last_mouse_pos:
+                    dx = x - self.last_mouse_pos[0]
+                    dy = y - self.last_mouse_pos[1]
+                    # Use dx and dy for dragging functionality
+                    # For example, panning the 3D map view
+                self.last_mouse_pos = (x, y)
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling mouse motion: {e}")
+
+    def handle_key_down(self, event):
+        """Handle key down events."""
+        try:
+            # Check if we should handle this key
+            if not self.handle_3d_input:
                 return
                 
-            # Use a simpler approach without pushing/popping matrix states
-            # Disable lighting for simpler rendering
-            glDisable(GL_LIGHTING)
-            
-            # Set up for vertical lines
-            glLineWidth(1.0)
-            
-            # Get the maximum render distance
-            max_range = int(self.render_distance)
-            
-            # Draw vertical lines
-            glBegin(GL_LINES)
-            for pos, char_obj in self.characters.items():
-                # Skip if no character
-                if not char_obj or not hasattr(char_obj, 'char') or not char_obj.char:
-                    continue
-                    
-                # Get position
-                x, y = pos
-                
-                # Skip if outside render distance
-                if abs(x) > max_range or abs(y) > max_range:
-                    continue
-                
-                # Get color
-                color = char_obj.color
-                
-                # Get height
-                height = getattr(char_obj, 'height', 1.0)
-                
-                # Set color
-                glColor3f(color[0], color[1], color[2])
-                
-                # Draw vertical line
-                glVertex3f(x, 0, y)
-                glVertex3f(x, height, y)
-            glEnd()
-            
-            # Draw dots at the top if enabled
-            if self.show_dots_without_sticks:
-                glPointSize(self.stick_dot_size)
-                glBegin(GL_POINTS)
-                for pos, char_obj in self.characters.items():
-                    # Skip if no character
-                    if not char_obj or not hasattr(char_obj, 'char') or not char_obj.char:
-                        continue
-                        
-                    # Get position
-                    x, y = pos
-                    
-                    # Skip if outside render distance
-                    if abs(x) > max_range or abs(y) > max_range:
-                        continue
-                    
-                    # Get color
-                    color = char_obj.color
-                    
-                    # Get height
-                    height = getattr(char_obj, 'height', 1.0)
-                    
-                    # Set color
-                    glColor3f(color[0], color[1], color[2])
-                    
-                    # Draw dot at the top
-                    glVertex3f(x, height, y)
-                glEnd()
-            
-            # Restore lighting
-            glEnable(GL_LIGHTING)
-            
-        except Exception as e:
-            self.add_debug_message(f"Error drawing vertical lines: {e}")
-    
-    def get_height_at(self, x, z):
-        """Get the height at the given position."""
-        # Convert to integer coordinates
-        ix, iz = int(round(x)), int(round(z))
-        
-        # Check if we have a character at this position
-        pos = (ix, iz)
-        if pos in self.characters:
-            char_obj = self.characters[pos]
-            if hasattr(char_obj, 'height'):
-                return char_obj.height
-        
-        # Default height
-        return 0.0
-    
-    def get_color_for_height(self, height):
-        """Get a color for the given height."""
-        # Choose color scheme
-        if self.terrain_color_scheme == "height":
-            # Simple height-based coloring
-            if height <= 0:
-                # Blue to cyan for negative heights (below ground)
-                r = 0
-                g = 0.5 + (height / -10) * 0.5  # 0.5 to 1.0 as height goes from 0 to -10
-                b = 1.0
-            else:
-                # Green to yellow to red for positive heights (above ground)
-                if height < 0.5:
-                    # Green to yellow (0 to 0.5)
-                    r = height / 0.5
-                    g = 0.8
-                    b = 0
+            # Handle key presses
+            if event.key == pygame.K_ESCAPE:
+                # Exit fullscreen mode if in fullscreen
+                if self.is_fullscreen:
+                    self.toggle_fullscreen()
+                # Otherwise, quit the GUI
                 else:
-                    # Yellow to red (0.5 to 1.0)
-                    r = 1.0
-                    g = 0.8 - ((height - 0.5) / 0.5) * 0.8
-                    b = 0
-        elif self.terrain_color_scheme == "viridis":
-            # Viridis colormap approximation (perceptually uniform, colorblind-friendly)
-            if height < -5:
-                # Dark purple to blue
-                r = 0.267 + (height / -10) * 4 * (0.128 - 0.267)
-                g = 0.004 + (height / -10) * 4 * (0.267 - 0.004)
-                b = 0.329 + (height / -10) * 4 * (0.533 - 0.329)
-            elif height < 0:
-                # Blue to green
-                t = (height / -5) * 4
-                r = 0.128 + t * (0.094 - 0.128)
-                g = 0.267 + t * (0.464 - 0.267)
-                b = 0.533 + t * (0.558 - 0.533)
-            elif height < 0.5:
-                # Green to yellow
-                t = (height / 0.5) * 4
-                r = 0.094 + t * (0.497 - 0.094)
-                g = 0.464 + t * (0.731 - 0.464)
-                b = 0.558 + t * (0.142 - 0.558)
-            else:
-                # Yellow to light yellow
-                t = ((height - 0.5) / 0.5) * 4
-                r = 0.497 + t * (0.993 - 0.497)
-                g = 0.731 + t * (0.906 - 0.731)
-                b = 0.142 + t * (0.143 - 0.142)
-        elif self.terrain_color_scheme == "viridis_inverted":
-            # Inverted Viridis colormap
-            if height < -5:
-                # Light yellow to yellow
-                r = 0.993 + (height / -10) * 4 * (0.497 - 0.993)
-                g = 0.906 + (height / -10) * 4 * (0.731 - 0.906)
-                b = 0.143 + (height / -10) * 4 * (0.142 - 0.143)
-            elif height < 0:
-                # Yellow to green
-                t = (height / -5) * 4
-                r = 0.497 + t * (0.094 - 0.497)
-                g = 0.731 + t * (0.464 - 0.731)
-                b = 0.142 + t * (0.558 - 0.142)
-            elif height < 0.5:
-                # Green to blue
-                t = (height / 0.5) * 4
-                r = 0.094 + t * (0.128 - 0.094)
-                g = 0.464 + t * (0.267 - 0.464)
-                b = 0.558 + t * (0.533 - 0.558)
-            else:
-                # Blue to dark purple
-                t = ((height - 0.5) / 0.5) * 4
-                r = 0.128 + t * (0.267 - 0.128)
-                g = 0.267 + t * (0.004 - 0.267)
-                b = 0.533 + t * (0.329 - 0.533)
-        elif self.terrain_color_scheme == "plasma":
-            # Plasma colormap approximation
-            if height < -5:
-                # Dark purple to purple
-                r = 0.050 + (height / -10) * 4 * (0.403 - 0.050)
-                g = 0.029 + (height / -10) * 4 * (0.029 - 0.029)
-                b = 0.527 + (height / -10) * 4 * (0.692 - 0.527)
-            elif height < 0:
-                # Purple to pink
-                t = (height / -5) * 4
-                r = 0.403 + t * (0.761 - 0.403)
-                g = 0.029 + t * (0.214 - 0.029)
-                b = 0.692 + t * (0.558 - 0.692)
-            elif height < 0.5:
-                # Pink to orange
-                t = (height / 0.5) * 4
-                r = 0.761 + t * (0.935 - 0.761)
-                g = 0.214 + t * (0.528 - 0.214)
-                b = 0.558 + t * (0.126 - 0.558)
-            else:
-                # Orange to yellow
-                t = ((height - 0.5) / 0.5) * 4
-                r = 0.935 + t * (0.993 - 0.935)
-                g = 0.528 + t * (0.906 - 0.528)
-                b = 0.126 + t * (0.143 - 0.126)
-        elif self.terrain_color_scheme == "inferno":
-            # Inferno colormap approximation
-            if height < -5:
-                # Black to purple
-                r = 0.001 + (height / -10) * 4 * (0.253 - 0.001)
-                g = 0.000 + (height / -10) * 4 * (0.066 - 0.000)
-                b = 0.014 + (height / -10) * 4 * (0.431 - 0.014)
-            elif height < 0:
-                # Purple to red
-                t = (height / -5) * 4
-                r = 0.253 + t * (0.632 - 0.253)
-                g = 0.066 + t * (0.194 - 0.066)
-                b = 0.431 + t * (0.364 - 0.431)
-            elif height < 0.5:
-                # Red to orange
-                t = (height / 0.5) * 4
-                r = 0.632 + t * (0.904 - 0.632)
-                g = 0.194 + t * (0.516 - 0.194)
-                b = 0.364 + t * (0.158 - 0.364)
-            else:
-                # Orange to yellow
-                t = ((height - 0.5) / 0.5) * 4
-                r = 0.904 + t * (0.988 - 0.904)
-                g = 0.516 + t * (0.998 - 0.516)
-                b = 0.158 + t * (0.645 - 0.158)
-        elif self.terrain_color_scheme == "magma":
-            # Magma colormap approximation
-            if height < -5:
-                # Black to purple
-                r = 0.001 + (height / -10) * 4 * (0.295 - 0.001)
-                g = 0.000 + (height / -10) * 4 * (0.057 - 0.000)
-                b = 0.014 + (height / -10) * 4 * (0.329 - 0.014)
-            elif height < 0:
-                # Purple to pink
-                t = (height / -5) * 4
-                r = 0.295 + t * (0.651 - 0.295)
-                g = 0.057 + t * (0.125 - 0.057)
-                b = 0.329 + t * (0.394 - 0.329)
-            elif height < 0.5:
-                # Pink to orange
-                t = (height / 0.5) * 4
-                r = 0.651 + t * (0.918 - 0.651)
-                g = 0.125 + t * (0.486 - 0.125)
-                b = 0.394 + t * (0.282 - 0.394)
-            else:
-                # Orange to light yellow
-                t = ((height - 0.5) / 0.5) * 4
-                r = 0.918 + t * (0.988 - 0.918)
-                g = 0.486 + t * (0.998 - 0.486)
-                b = 0.282 + t * (0.645 - 0.282)
-        elif self.terrain_color_scheme == "cividis":
-            # Cividis colormap approximation (colorblind-friendly)
-            if height < -5:
-                # Dark blue to blue
-                r = 0.000 + (height / -10) * 4 * (0.127 - 0.000)
-                g = 0.135 + (height / -10) * 4 * (0.302 - 0.135)
-                b = 0.304 + (height / -10) * 4 * (0.385 - 0.304)
-            elif height < 0:
-                # Blue to teal
-                t = (height / -5) * 4
-                r = 0.127 + t * (0.255 - 0.127)
-                g = 0.302 + t * (0.455 - 0.302)
-                b = 0.385 + t * (0.365 - 0.385)
-            elif height < 0.5:
-                # Teal to yellow-green
-                t = (height / 0.5) * 4
-                r = 0.255 + t * (0.540 - 0.255)
-                g = 0.455 + t * (0.600 - 0.455)
-                b = 0.365 + t * (0.260 - 0.365)
-            else:
-                # Yellow-green to yellow
-                t = ((height - 0.5) / 0.5) * 4
-                r = 0.540 + t * (0.993 - 0.540)
-                g = 0.600 + t * (0.906 - 0.600)
-                b = 0.260 + t * (0.144 - 0.260)
-        else:
-            # Default to grayscale
-            r = g = b = height
+                    self.running = False
+            elif event.key == pygame.K_F11 or (event.key == pygame.K_RETURN and event.mod & pygame.KMOD_ALT):
+                # Toggle fullscreen
+                self.toggle_fullscreen()
             
-        return (r, g, b)
-
-    def draw_terrain_mesh(self):
-        """Draw a mesh connecting the tips of the sticks to visualize the terrain surface."""
+            # Camera controls
+            elif event.key == pygame.K_UP or event.key == pygame.K_w:
+                # Forward key - move forward in the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('w')
+            elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
+                # Backward key - move backward from the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('s')
+            elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
+                # Left key - move left from the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('a')
+            elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
+                # Right key - move right from the direction we're facing
+                # Forward the key to the game for player movement
+                if self.game:
+                    self.game.handle_key('d')
+            elif event.key == pygame.K_PAGEUP:
+                # Move up
+                self.camera_y += self.camera_move_speed
+            elif event.key == pygame.K_PAGEDOWN:
+                # Move down
+                self.camera_y -= self.camera_move_speed
+            elif event.key == pygame.K_HOME:
+                # Reset camera position
+                self.camera_x = 0
+                self.camera_y = 10
+                self.camera_z = 0
+                self.rotation_x = 30
+                self.rotation_y = 0
+                
+        except Exception as e:
+            self.add_debug_message(f"Error handling key down: {str(e)}")
+            
+    def handle_key_up(self, event):
+        """Handle key up events."""
         try:
-            # Skip if no characters
-            if not self.characters:
+            # Check if we should handle this key
+            if not self.handle_3d_input:
                 return
                 
-            # Use a simpler approach without pushing/popping matrix states
-            # Set up for terrain mesh
-            glDisable(GL_LIGHTING)
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            
-            # Set mesh style
-            if self.terrain_mesh_style == "wireframe":
-                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-            else:
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            
-            # Set mesh opacity
-            mesh_alpha = self.terrain_mesh_opacity
-            
-            # Create a grid of points
-            grid_size = 1.0  # Distance between grid points
-            max_range = int(self.render_distance / 2)  # Reduce range for better performance
-            
-            # Draw the mesh as a series of triangle strips
-            for z in range(-max_range, max_range, int(grid_size)):
-                glBegin(GL_TRIANGLE_STRIP)
-                for x in range(-max_range, max_range, int(grid_size)):
-                    # Get heights at these positions
-                    h1 = self.get_height_at(x, z)
-                    h2 = self.get_height_at(x, z + grid_size)
-                    
-                    # Set colors based on height
-                    color1 = self.get_color_for_height(h1)
-                    color2 = self.get_color_for_height(h2)
-                    
-                    # Add alpha
-                    color1 = (color1[0], color1[1], color1[2], mesh_alpha)
-                    color2 = (color2[0], color2[1], color2[2], mesh_alpha)
-                    
-                    # Add vertices
-                    glColor4f(*color1)
-                    glVertex3f(x, h1, z)
-                    
-                    glColor4f(*color2)
-                    glVertex3f(x, h2, z + grid_size)
-                glEnd()
-            
-            # Restore state
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            glDisable(GL_BLEND)
-            glEnable(GL_LIGHTING)
+            # Handle key releases
+            pass
             
         except Exception as e:
-            self.add_debug_message(f"Error drawing terrain mesh: {e}")
-    
-    def draw_connected_snakes(self):
-        """Draw snakes as connected balls."""
+            self.add_debug_message(f"Error handling key up: {str(e)}")
+            
+    def toggle_fullscreen(self):
+        """Toggle fullscreen mode."""
         try:
-            # Skip if no snakes
-            if not self.snakes:
-                return
+            # Toggle fullscreen flag
+            self.is_fullscreen = not self.is_fullscreen
+            
+            # Remember current size if going to fullscreen
+            if self.is_fullscreen:
+                self.pre_fullscreen_size = pygame.display.get_surface().get_size()
                 
-            # Use a simpler approach without pushing/popping matrix states
-            # Draw each snake as simple colored cubes
-            
-            # Set up once for all snakes
-            glDisable(GL_LIGHTING)  # Disable lighting for simpler rendering
-            
-            for snake_idx, snake_body in enumerate(self.snakes):
-                if not snake_body:
-                    continue
+            # Set new display mode - always use regular pygame (no OpenGL)
+            flags = pygame.FULLSCREEN if self.is_fullscreen else 0
+            flags |= pygame.DOUBLEBUF
                 
-                # Draw each segment as a simple cube without matrix operations
-                for i, (x, y) in enumerate(snake_body):
-                    # Determine color based on segment type
-                    if i == 0:
-                        # Head - red
-                        glColor3f(0.8, 0.2, 0.2)
-                    elif i >= len(snake_body) - 2:  # Assume last 2 segments are rattles
-                        # Rattle - yellow
-                        glColor3f(0.8, 0.8, 0.2)
-                    else:
-                        # Body - dark blue (matching the text map color)
-                        glColor3f(0.0, 0.0, 0.7)
-                    
-                    # Draw a simple cube
-                    self.draw_simple_cube(x, 0.5, y, 0.4)
-            
-            # Restore lighting
-            glEnable(GL_LIGHTING)
+            # Create new screen
+            self.screen = pygame.display.set_mode(
+                (0, 0) if self.is_fullscreen else self.pre_fullscreen_size,
+                flags
+            )
+                
+            # Update width and height
+            self.width, self.height = pygame.display.get_surface().get_size()
             
         except Exception as e:
-            self.add_debug_message(f"Error drawing connected snakes: {e}")
-    
-    def draw_simple_cube(self, x, y, z, size):
-        """Draw a simple marker at the given position instead of a cube to avoid OpenGL errors."""
-        try:
-            # Draw a simple point instead of a cube
-            glDisable(GL_TEXTURE_2D)
-            glDisable(GL_LIGHTING)
-            
-            # Set point size
-            glPointSize(5.0)
-            
-            # Draw a point at the specified position
-            glBegin(GL_POINTS)
-            glVertex3f(x, y, z)
-            glEnd()
-            
-            # Reset point size
-            glPointSize(1.0)
-            
-        except Exception as e:
-            self.add_debug_message(f"Error drawing point marker: {e}")
+            self.add_debug_message(f"Error toggling fullscreen: {e}")
 
-    def draw_ground_plane(self):
-        """Draw a simple ground plane."""
+    def restart_gui(self):
+        """Restart the GUI thread with new settings."""
         try:
-            # Disable lighting and texturing for simpler rendering
-            glDisable(GL_LIGHTING)
-            glDisable(GL_TEXTURE_2D)
-            
-            # Set color for ground plane
-            glColor3f(0.2, 0.2, 0.2)
-            
-            # Draw a simple grid
-            grid_size = 50
-            grid_step = 5
-            
-            # Use GL_LINES for better performance
-            glBegin(GL_LINES)
-            
-            # Draw lines along X axis
-            for i in range(-grid_size, grid_size + 1, grid_step):
-                glVertex3f(i, 0, -grid_size)
-                glVertex3f(i, 0, grid_size)
-            
-            # Draw lines along Z axis
-            for i in range(-grid_size, grid_size + 1, grid_step):
-                glVertex3f(-grid_size, 0, i)
-                glVertex3f(grid_size, 0, i)
+            # Set new display mode - always use regular pygame (no OpenGL)
+            flags = pygame.FULLSCREEN if self.is_fullscreen else 0
+            flags |= pygame.DOUBLEBUF
                 
-            glEnd()
+            # Create new screen
+            self.screen = pygame.display.set_mode(
+                (self.width, self.height),
+                flags
+            )
             
+            # Update caption
+            pygame.display.set_caption("TextWarp Debug View")
+                
         except Exception as e:
-            self.add_debug_message(f"Error drawing ground plane: {e}")
+            self.add_debug_message(f"Error restarting GUI: {e}")
