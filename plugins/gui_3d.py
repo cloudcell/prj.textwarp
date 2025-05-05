@@ -75,7 +75,11 @@ class GUI3DPlugin(Plugin):
         self.rotation_speed = 2.0          # Rotation speed in degrees
         self.handle_3d_input = True        # Whether to handle keyboard input in 3D view
         
+        # Window settings
         self.window = None
+        self.window_size = (800, 600)      # Default window size
+        self.is_fullscreen = False         # Track fullscreen state
+        
         self.characters = {}  # 3D character objects
         self.last_mouse_pos = None
         self.dragging = False
@@ -631,7 +635,7 @@ class GUI3DPlugin(Plugin):
                 self.draw_text = self.draw_text_fallback
             
             # Create a window
-            display = (800, 600)
+            display = self.window_size
             pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
             pygame.display.set_caption("TextWarp 3D Visualization")
             
@@ -682,6 +686,34 @@ class GUI3DPlugin(Plugin):
                                 self.rotation_y += dx * 0.5
                                 self.rotation_x += dy * 0.5
                             self.last_mouse_pos = (x, y)
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_f:  # F key
+                            # Toggle fullscreen
+                            self.is_fullscreen = not self.is_fullscreen
+                            if self.is_fullscreen:
+                                pygame.display.set_mode((0, 0), pygame.FULLSCREEN | DOUBLEBUF | OPENGL)
+                            else:
+                                pygame.display.set_mode(self.window_size, DOUBLEBUF | OPENGL)
+                            
+                            # Reinitialize OpenGL context after changing display mode
+                            glEnable(GL_DEPTH_TEST)
+                            glEnable(GL_LIGHTING)
+                            glEnable(GL_LIGHT0)
+                            glEnable(GL_COLOR_MATERIAL)
+                            glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+                            
+                            # Set up the light
+                            glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
+                            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1))
+                            glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.8, 0.8, 0.8, 1))
+                            
+                            # Set up the projection matrix
+                            glMatrixMode(GL_PROJECTION)
+                            glLoadIdentity()
+                            gluPerspective(60, (pygame.display.Info().current_w/pygame.display.Info().current_h), 0.1, 200.0)
+                            
+                            # Add a debug message about fullscreen toggle
+                            self.add_debug_message(f"Fullscreen: {self.is_fullscreen}")
                 
                 # Handle keyboard input for camera-relative movement
                 if self.handle_3d_input:
