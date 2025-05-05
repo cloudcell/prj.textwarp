@@ -18,6 +18,7 @@ class AudioPlugin(Plugin):
         self.volume = 0.7  # Default volume (0.0 to 1.0)
         self.is_playing = False
         self.auto_play = True  # Auto-play next track when current one finishes
+        self.play_on_start = True  # Play random track when plugin is activated
         self.show_track_info = True  # Show track info in the game UI
         self.track_info_timeout = 0.0  # Timeout for displaying track info
         self.track_info_duration = 5.0  # How long to display track info
@@ -67,7 +68,7 @@ class AudioPlugin(Plugin):
                 self.refresh_playlist()
                 
                 # Start playing if auto_play is enabled and we have tracks
-                if self.auto_play and self.playlist:
+                if self.play_on_start and self.playlist:
                     self.play_random()
                     
                 # Start a thread for audio analysis
@@ -269,6 +270,7 @@ class AudioPlugin(Plugin):
         original_volume = self.volume
         original_auto_play = self.auto_play
         original_show_track_info = self.show_track_info
+        original_play_on_start = self.play_on_start
         
         # Get curses module from the game
         curses = self.game.curses
@@ -284,6 +286,7 @@ class AudioPlugin(Plugin):
         menu_options = [
             f"Volume: {int(self.volume * 100)}%",
             f"Auto-Play: {'Yes' if self.auto_play else 'No'}",
+            f"Play on Start: {'Yes' if self.play_on_start else 'No'}",
             f"Show Track Info: {'Yes' if self.show_track_info else 'No'}",
             f"{'Pause' if self.is_playing else 'Play'}",
             "Play Random Track",
@@ -336,10 +339,13 @@ class AudioPlugin(Plugin):
                 elif current_selection == 1:  # Auto-Play
                     self.auto_play = not self.auto_play
                     menu_options[1] = f"Auto-Play: {'Yes' if self.auto_play else 'No'}"
-                elif current_selection == 2:  # Show Track Info
+                elif current_selection == 2:  # Play on Start
+                    self.play_on_start = not self.play_on_start
+                    menu_options[2] = f"Play on Start: {'Yes' if self.play_on_start else 'No'}"
+                elif current_selection == 3:  # Show Track Info
                     self.show_track_info = not self.show_track_info
-                    menu_options[2] = f"Show Track Info: {'Yes' if self.show_track_info else 'No'}"
-                elif current_selection == 3:  # Play/Pause
+                    menu_options[3] = f"Show Track Info: {'Yes' if self.show_track_info else 'No'}"
+                elif current_selection == 4:  # Play/Pause
                     if self.is_playing:
                         self.pause()
                     else:
@@ -347,14 +353,14 @@ class AudioPlugin(Plugin):
                             self.play(self.current_track)
                         else:
                             self.play_random()
-                    menu_options[3] = f"{'Pause' if self.is_playing else 'Play'}"
-                elif current_selection == 4:  # Play Random
+                    menu_options[4] = f"{'Pause' if self.is_playing else 'Play'}"
+                elif current_selection == 5:  # Play Random
                     self.play_random()
-                    menu_options[3] = "Pause" if self.is_playing else "Play"
-                elif current_selection == 5:  # Refresh Playlist
+                    menu_options[4] = "Pause" if self.is_playing else "Play"
+                elif current_selection == 6:  # Refresh Playlist
                     self.refresh_playlist()
-                    menu_options[6] = f"Tracks: {len(self.playlist)}"
-                elif current_selection == 7:  # Back
+                    menu_options[7] = f"Tracks: {len(self.playlist)}"
+                elif current_selection == 8:  # Back
                     # Save settings
                     self.save_settings()
                     in_audio_menu = False
@@ -363,6 +369,7 @@ class AudioPlugin(Plugin):
                 self.volume = original_volume
                 self.auto_play = original_auto_play
                 self.show_track_info = original_show_track_info
+                self.play_on_start = original_play_on_start
                 if self.initialized:
                     pygame.mixer.music.set_volume(self.volume)
                 in_audio_menu = False
@@ -379,6 +386,7 @@ class AudioPlugin(Plugin):
                 self.volume = settings.get("volume", 0.7)
                 self.auto_play = settings.get("auto_play", True)
                 self.show_track_info = settings.get("show_track_info", True)
+                self.play_on_start = settings.get("play_on_start", True)
         except:
             # Use default settings if file doesn't exist or is invalid
             pass
@@ -390,7 +398,8 @@ class AudioPlugin(Plugin):
             settings = {
                 "volume": self.volume,
                 "auto_play": self.auto_play,
-                "show_track_info": self.show_track_info
+                "show_track_info": self.show_track_info,
+                "play_on_start": self.play_on_start
             }
             with open("audio_settings.json", "w") as f:
                 json.dump(settings, f)
