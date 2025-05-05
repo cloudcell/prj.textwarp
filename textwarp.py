@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 import curses
 import time
+import random
 import math
-import os
 import json
 import hashlib
-import random
+import os
 import signal
 from plugins.base import Plugin
 from plugins.snake import SnakePlugin
 from plugins.graph_classifier import GraphClassifierPlugin
-from plugins.network import NetworkPlugin
-from plugins.gui_3d import GUI3DPlugin
 from plugins.polygraph_3d import Polygraph3DPlugin
+from plugins.gui_3d import GUI3DPlugin
 from plugins.audio import AudioPlugin
+from plugins.network import NetworkPlugin
+from keybindings import KeyBindings
 import copy
 
 class TextAdventure:
@@ -115,7 +116,7 @@ class TextAdventure:
         self.current_menu = "main"
         self.menu_selection = 0
         self.menus = {
-            "main": ["Resume Game", "Plugin Management", "Color Settings", "3D Polygraph Settings", "3D Visualization Settings", "Location Settings", "Network", "Audio Settings", "Exit"],
+            "main": ["Resume Game", "Plugin Management", "Color Settings", "Key Bindings", "Location Settings", "Audio Settings", "3D Settings", "Network", "Quit"],
             "plugins": [],  # Will be populated with plugin names
             "location": ["Start at Last Location: " + ("Yes" if self.start_at_last_location else "No"), 
                          "Save Current Location", 
@@ -133,6 +134,9 @@ class TextAdventure:
         self.last_player_x = 0
         self.last_player_y = 0
         self.cache_valid = False
+        
+        # Initialize key bindings
+        self.key_bindings = KeyBindings()
 
     def initialize_plugins(self):
         # Add plugins here
@@ -314,32 +318,44 @@ class TextAdventure:
         self.dx = 0
         self.dy = 0
         
-        # Arrow keys
-        if self.key_states.get(curses.KEY_UP, False):
+        # Use key bindings for movement
+        if self.key_states.get(self.key_bindings.terminal_keys["move_up"], False):
             self.dy = -1
-        if self.key_states.get(curses.KEY_DOWN, False):
+        if self.key_states.get(self.key_bindings.terminal_keys["move_down"], False):
             self.dy = 1
-        if self.key_states.get(curses.KEY_LEFT, False):
+        if self.key_states.get(self.key_bindings.terminal_keys["move_left"], False):
             self.dx = -1
-        if self.key_states.get(curses.KEY_RIGHT, False):
+        if self.key_states.get(self.key_bindings.terminal_keys["move_right"], False):
             self.dx = 1
-            
-        # WASD keys
-        if self.key_states.get(ord('w'), False):
+        
+        # Diagonal movement
+        if self.key_states.get(self.key_bindings.terminal_keys["move_up_left"], False):
+            self.dx = -1
             self.dy = -1
-        if self.key_states.get(ord('s'), False):
-            self.dy = 1
-        if self.key_states.get(ord('a'), False):
-            self.dx = -1
-        if self.key_states.get(ord('d'), False):
+        if self.key_states.get(self.key_bindings.terminal_keys["move_up_right"], False):
             self.dx = 1
+            self.dy = -1
+        if self.key_states.get(self.key_bindings.terminal_keys["move_down_left"], False):
+            self.dx = -1
+            self.dy = 1
+        if self.key_states.get(self.key_bindings.terminal_keys["move_down_right"], False):
+            self.dx = 1
+            self.dy = 1
             
-        # Numeric keypad
-        for numkey, (dx, dy) in self.numpad_directions.items():
-            if self.key_states.get(numkey, False):
-                self.dx = dx
-                self.dy = dy
-                
+        # Rotation
+        if self.key_states.get(self.key_bindings.terminal_keys["rotate_ccw"], False):
+            # Find the GUI3D plugin and rotate counter-clockwise
+            for plugin in self.plugins:
+                if isinstance(plugin, GUI3DPlugin) and plugin.active:
+                    plugin.rotation_y += plugin.rotation_speed
+                    break
+        if self.key_states.get(self.key_bindings.terminal_keys["rotate_cw"], False):
+            # Find the GUI3D plugin and rotate clockwise
+            for plugin in self.plugins:
+                if isinstance(plugin, GUI3DPlugin) and plugin.active:
+                    plugin.rotation_y -= plugin.rotation_speed
+                    break
+            
         # Normalize diagonal movement
         if self.dx != 0 and self.dy != 0:
             self.dx *= 0.7071  # 1/sqrt(2)
@@ -390,65 +406,21 @@ class TextAdventure:
                 # Return to menu mode
                 self.in_menu = True
                 self.needs_redraw = True
-            elif self.menu_selection == 3:  # 3D Polygraph Settings
-                # Check if the 3D Polygraph plugin is active
-                polygraph_plugin = None
-                for plugin in self.plugins:
-                    if plugin.__class__.__name__ == "Polygraph3DPlugin" and plugin.active:
-                        polygraph_plugin = plugin
-                        break
+            elif self.menu_selection == 3:  # Key Bindings
+                # Temporarily exit menu mode
+                self.in_menu = False
+                self.needs_redraw = True
                 
-                if polygraph_plugin:
-                    # Show 3D Polygraph settings menu
-                    # The plugin will handle menu state management internally
-                    polygraph_plugin.show_settings_menu()
-                else:
-                    # Show message that plugin is not active
-                    self.message = "3D Polygraph plugin is not active. Please activate it first."
-                    self.message_timeout = 3.0
-                    self.in_menu = False
-                    self.needs_redraw = True
-            elif self.menu_selection == 4:  # 3D Visualization Settings
-                # Check if the 3D Visualization plugin is active
-                gui3d_plugin = None
-                for plugin in self.plugins:
-                    if plugin.__class__.__name__ == "GUI3DPlugin" and plugin.active:
-                        gui3d_plugin = plugin
-                        break
+                # Show key bindings menu
+                self.show_key_bindings_menu()
                 
-                if gui3d_plugin:
-                    # Show 3D Visualization settings menu
-                    # The plugin will handle menu state management internally
-                    gui3d_plugin.show_settings_menu()
-                else:
-                    # Show message that plugin is not active
-                    self.message = "3D Visualization plugin is not active. Please activate it first."
-                    self.message_timeout = 3.0
-                    self.in_menu = False
-                    self.needs_redraw = True
-            elif self.menu_selection == 5:  # Location Settings
+                # Return to menu mode
+                self.in_menu = True
+                self.needs_redraw = True
+            elif self.menu_selection == 4:  # Location Settings
                 self.current_menu = "location"
                 self.menu_selection = 0
-            elif self.menu_selection == 6:  # Network
-                # Find the network plugin
-                network_plugin = None
-                for plugin in self.plugins:
-                    if plugin.__class__.__name__ == "NetworkPlugin":
-                        network_plugin = plugin
-                        break
-                
-                if network_plugin:
-                    # Temporarily exit menu mode
-                    self.in_menu = False
-                    self.needs_redraw = True
-                    
-                    # Show network menu
-                    network_plugin.show_network_menu()
-                    
-                    # Return to menu mode
-                    self.in_menu = True
-                    self.needs_redraw = True
-            elif self.menu_selection == 7:  # Audio Settings
+            elif self.menu_selection == 5:  # Audio Settings
                 # Temporarily exit menu mode
                 self.in_menu = False
                 self.needs_redraw = True
@@ -459,7 +431,29 @@ class TextAdventure:
                 # Return to menu mode
                 self.in_menu = True
                 self.needs_redraw = True
-            elif self.menu_selection == 8:  # Exit
+            elif self.menu_selection == 6:  # 3D Settings
+                # Temporarily exit menu mode
+                self.in_menu = False
+                self.needs_redraw = True
+                
+                # Show 3D settings menu
+                self.show_3d_settings_menu()
+                
+                # Return to menu mode
+                self.in_menu = True
+                self.needs_redraw = True
+            elif self.menu_selection == 7:  # Network
+                # Temporarily exit menu mode
+                self.in_menu = False
+                self.needs_redraw = True
+                
+                # Show network menu
+                self.show_network_menu()
+                
+                # Return to menu mode
+                self.in_menu = True
+                self.needs_redraw = True
+            elif self.menu_selection == 8:  # Quit
                 self.running = False
         elif self.current_menu == "plugins":
             if self.menu_selection < len(self.plugins):
@@ -1287,6 +1281,230 @@ class TextAdventure:
             
         # Show the audio menu
         audio_plugin.show_audio_menu()
+
+    def show_key_bindings_menu(self):
+        """Show the key bindings menu."""
+        # Variables for menu navigation
+        current_selection = 0
+        in_key_bindings_menu = True
+        
+        # Menu options
+        menu_options = [
+            "Terminal Controls",
+            "3D GUI Controls",
+            "Reset All to Defaults",
+            "Back to Main Menu"
+        ]
+        
+        # Main loop for key bindings menu
+        while in_key_bindings_menu:
+            # Clear screen
+            self.screen.clear()
+            
+            # Draw header
+            self.screen.addstr(0, 0, "Key Bindings Settings", self.menu_color | curses.A_BOLD)
+            self.screen.addstr(1, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw instructions
+            self.screen.addstr(2, 0, "Use ↑/↓ to select an option, ENTER to select", self.menu_color)
+            self.screen.addstr(3, 0, "Press ESC to exit", self.menu_color)
+            self.screen.addstr(4, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw menu options
+            for i, option in enumerate(menu_options):
+                # Highlight the selected item
+                if i == current_selection:
+                    attr = self.menu_color | curses.A_BOLD
+                else:
+                    attr = self.menu_color
+                
+                # Draw the item
+                self.screen.addstr(i + 6, 2, option, attr)
+            
+            # Draw footer
+            self.screen.addstr(self.max_y - 2, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Refresh screen
+            self.screen.refresh()
+            
+            # Get input
+            key = self.screen.getch()
+            
+            # Handle input
+            if key == curses.KEY_UP:
+                current_selection = (current_selection - 1) % len(menu_options)
+            elif key == curses.KEY_DOWN:
+                current_selection = (current_selection + 1) % len(menu_options)
+            elif key == 10:  # Enter key
+                if current_selection == 0:  # Terminal Controls
+                    self.show_terminal_key_bindings()
+                elif current_selection == 1:  # 3D GUI Controls
+                    self.show_gui_key_bindings()
+                elif current_selection == 2:  # Reset All to Defaults
+                    self.key_bindings.reset_to_defaults()
+                    self.key_bindings.save_bindings()
+                    self.message = "All key bindings reset to defaults"
+                    self.message_timeout = 2.0
+                elif current_selection == 3:  # Back to Main Menu
+                    in_key_bindings_menu = False
+            elif key == 27:  # Escape key
+                in_key_bindings_menu = False
+        
+        # Force redraw
+        self.needs_redraw = True
+
+    def show_terminal_key_bindings(self):
+        """Show the terminal key bindings menu."""
+        # Variables for menu navigation
+        current_selection = 0
+        key_bindings = list(self.key_bindings.terminal_keys.keys())
+        in_key_bindings_menu = True
+        
+        # Main loop for key bindings menu
+        while in_key_bindings_menu:
+            # Clear screen
+            self.screen.clear()
+            
+            # Draw header
+            self.screen.addstr(0, 0, "Terminal Key Bindings", self.menu_color | curses.A_BOLD)
+            self.screen.addstr(1, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw instructions
+            self.screen.addstr(2, 0, "Use ↑/↓ to select a key binding, ENTER to edit", self.menu_color)
+            self.screen.addstr(3, 0, "Press ESC to exit", self.menu_color)
+            self.screen.addstr(4, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw key bindings
+            for i, key in enumerate(key_bindings):
+                # Highlight the selected item
+                if i == current_selection:
+                    attr = self.menu_color | curses.A_BOLD
+                else:
+                    attr = self.menu_color
+                
+                # Get the key name for display
+                key_code = self.key_bindings.terminal_keys[key]
+                key_name = self.key_bindings.get_key_name(key_code)
+                action_desc = self.key_bindings.get_action_description(key)
+                
+                # Draw the item
+                self.screen.addstr(i + 6, 2, f"{action_desc}: {key_name}", attr)
+            
+            # Draw footer
+            self.screen.addstr(self.max_y - 2, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Refresh screen
+            self.screen.refresh()
+            
+            # Get input
+            key = self.screen.getch()
+            
+            # Handle input
+            if key == curses.KEY_UP:
+                current_selection = (current_selection - 1) % len(key_bindings)
+            elif key == curses.KEY_DOWN:
+                current_selection = (current_selection + 1) % len(key_bindings)
+            elif key == 10:  # Enter key
+                # Edit the selected key binding
+                self.edit_key_binding(key_bindings[current_selection])
+                # Save the changes
+                self.key_bindings.save_bindings()
+            elif key == 27:  # Escape key
+                in_key_bindings_menu = False
+        
+        # Force redraw
+        self.needs_redraw = True
+
+    def show_gui_key_bindings(self):
+        """Show the 3D GUI key bindings menu."""
+        # Find the GUI3D plugin
+        gui3d_plugin = None
+        for plugin in self.plugins:
+            if isinstance(plugin, GUI3DPlugin):
+                gui3d_plugin = plugin
+                break
+                
+        if gui3d_plugin:
+            # Show the GUI key bindings menu
+            gui3d_plugin.show_key_bindings_menu()
+        else:
+            # Show message that plugin is not found
+            self.message = "3D GUI plugin not found"
+            self.message_timeout = 2.0
+
+    def edit_key_binding(self, key):
+        """Edit a key binding."""
+        # Variables for editing
+        new_key = None
+        editing = True
+        
+        # Main loop for editing
+        while editing:
+            # Clear screen
+            self.screen.clear()
+            
+            # Draw header
+            self.screen.addstr(0, 0, "Edit Key Binding", self.menu_color | curses.A_BOLD)
+            self.screen.addstr(1, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw instructions
+            self.screen.addstr(2, 0, "Press a key to bind it to this action", self.menu_color)
+            self.screen.addstr(3, 0, "Press ESC to cancel", self.menu_color)
+            self.screen.addstr(4, 0, "═" * (self.max_x - 1), self.menu_color)
+            
+            # Draw current key binding
+            self.screen.addstr(6, 2, f"Current key binding: {self.key_bindings.terminal_keys[key]}", self.menu_color)
+            
+            # Refresh screen
+            self.screen.refresh()
+            
+            # Get input
+            new_key = self.screen.getch()
+            
+            # Handle input
+            if new_key == 27:  # Escape key
+                editing = False
+            else:
+                # Update the key binding
+                self.key_bindings.terminal_keys[key] = new_key
+                editing = False
+        
+        # Force redraw
+        self.needs_redraw = True
+
+    def show_3d_settings_menu(self):
+        """Show the 3D settings menu."""
+        # Find the GUI3D plugin
+        gui3d_plugin = None
+        for plugin in self.plugins:
+            if isinstance(plugin, GUI3DPlugin):
+                gui3d_plugin = plugin
+                break
+                
+        if gui3d_plugin:
+            # Show the 3D settings menu
+            gui3d_plugin.show_3d_settings_menu()
+        else:
+            # Show message that plugin is not found
+            self.message = "3D GUI plugin not found"
+            self.message_timeout = 2.0
+
+    def show_network_menu(self):
+        """Show the network menu."""
+        # Find the Network plugin
+        network_plugin = None
+        for plugin in self.plugins:
+            if isinstance(plugin, NetworkPlugin):
+                network_plugin = plugin
+                break
+                
+        if network_plugin:
+            # Show the network menu
+            network_plugin.show_network_menu()
+        else:
+            # Show message that plugin is not found
+            self.message = "Network plugin not found"
+            self.message_timeout = 2.0
 
 def main():
     """Main function to run the game."""

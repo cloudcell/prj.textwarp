@@ -7,7 +7,9 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
 import numpy as np
+import curses
 from plugins.base import Plugin
+from keybindings import KeyBindings
 
 class Character3D:
     """Represents a character in 3D space."""
@@ -47,15 +49,34 @@ class GUI3DPlugin(Plugin):
     """Plugin that provides a 3D visualization of the game world."""
     
     def __init__(self, game):
+        """Initialize the plugin."""
         super().__init__(game)
-        self.window = None
+        # Don't set self.name here since it's a property
+        self.description = "Provides a 3D visualization of the game world."
+        self.active = False
         self.running = False
         self.gui_thread = None
+        
+        # Initialize key bindings
+        self.key_bindings = KeyBindings()
+        
+        # Camera settings
+        self.rotation_x = 30.0
+        self.rotation_y = 0.0
+        self.rotation_z = 0.0
+        self.zoom = -50.0
+        
+        # Camera movement properties
+        self.camera_direction = [0, 0, 1]  # Forward vector (z-axis)
+        self.camera_right = [1, 0, 0]      # Right vector (x-axis)
+        self.camera_up = [0, 1, 0]         # Up vector (y-axis)
+        self.movement_speed = 1.0          # Movement speed
+        self.camera_move_speed = 1.0       # For backward compatibility
+        self.rotation_speed = 2.0          # Rotation speed in degrees
+        self.handle_3d_input = True        # Whether to handle keyboard input in 3D view
+        
+        self.window = None
         self.characters = {}  # 3D character objects
-        self.rotation_x = 30  # Initial rotation angles
-        self.rotation_y = 0
-        self.rotation_z = 0
-        self.zoom = -30  # Increased initial zoom out to see more terrain
         self.last_mouse_pos = None
         self.dragging = False
         self.font_texture = None
@@ -64,10 +85,6 @@ class GUI3DPlugin(Plugin):
         self.snakes = []  # List to store snake data for connected rendering
         self.debug_messages = []  # List to store debug messages
         self.max_debug_messages = 5  # Maximum number of debug messages to display
-        
-        # Camera movement
-        self.camera_move_speed = 1.0  # Units per keypress
-        self.handle_3d_input = True  # Whether to handle keyboard input in 3D view
         
         # Display options
         self.show_letters = True
@@ -695,23 +712,31 @@ class GUI3DPlugin(Plugin):
         move_x = 0
         move_z = 0
         
-        # Apply movement based on arrow keys
-        if keys[pygame.K_UP]:
+        # Apply movement based on key bindings
+        if keys[self.key_bindings.gui_keys["move_forward"]]:
             # Move forward
-            move_x += forward_x * self.camera_move_speed
-            move_z += forward_z * self.camera_move_speed
-        if keys[pygame.K_DOWN]:
+            move_x += forward_x * self.movement_speed
+            move_z += forward_z * self.movement_speed
+        if keys[self.key_bindings.gui_keys["move_backward"]]:
             # Move backward
-            move_x -= forward_x * self.camera_move_speed
-            move_z -= forward_z * self.camera_move_speed
-        if keys[pygame.K_RIGHT]:
+            move_x -= forward_x * self.movement_speed
+            move_z -= forward_z * self.movement_speed
+        if keys[self.key_bindings.gui_keys["strafe_right"]]:
             # Move right
-            move_x += right_x * self.camera_move_speed
-            move_z += right_z * self.camera_move_speed
-        if keys[pygame.K_LEFT]:
+            move_x += right_x * self.movement_speed
+            move_z += right_z * self.movement_speed
+        if keys[self.key_bindings.gui_keys["strafe_left"]]:
             # Move left
-            move_x -= right_x * self.camera_move_speed
-            move_z -= right_z * self.camera_move_speed
+            move_x -= right_x * self.movement_speed
+            move_z -= right_z * self.movement_speed
+        
+        # Handle rotation
+        if keys[self.key_bindings.gui_keys["rotate_ccw"]]:
+            # Rotate counter-clockwise
+            self.rotation_y += self.rotation_speed
+        if keys[self.key_bindings.gui_keys["rotate_cw"]]:
+            # Rotate clockwise
+            self.rotation_y -= self.rotation_speed
             
         # Apply movement to game world coordinates if any movement occurred
         if move_x != 0 or move_z != 0:
@@ -1540,6 +1565,160 @@ class GUI3DPlugin(Plugin):
         # Restore game state
         self.game.in_menu = True
         self.game.needs_redraw = True
+    
+    def show_key_bindings_menu(self):
+        """Show the key bindings menu for the 3D GUI."""
+        # Store original key bindings in case user cancels
+        original_key_bindings = self.key_bindings.gui_keys.copy()
+        
+        # Create a list of settings
+        settings = []
+        for action, key_code in self.key_bindings.gui_keys.items():
+            settings.append({
+                "name": self.key_bindings.get_action_description(action),
+                "key": action,
+                "value": key_code,
+                "type": "key"
+            })
+        
+        # Add a reset option
+        settings.append({
+            "name": "Reset to Defaults",
+            "key": "reset",
+            "value": None,
+            "type": "button"
+        })
+        
+        # Add a save option
+        settings.append({
+            "name": "Save Changes",
+            "key": "save",
+            "value": None,
+            "type": "button"
+        })
+        
+        # Add a cancel option
+        settings.append({
+            "name": "Cancel",
+            "key": "cancel",
+            "value": None,
+            "type": "button"
+        })
+        
+        # Variables for menu navigation
+        current_selection = 0
+        in_menu = True
+        
+        # Main loop for settings menu
+        while in_menu:
+            # Clear screen
+            self.game.screen.clear()
+            
+            # Draw header
+            self.game.screen.addstr(0, 0, "3D GUI Key Bindings", self.game.menu_color | curses.A_BOLD)
+            self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Draw instructions
+            self.game.screen.addstr(2, 0, "Use ↑/↓ to select, ENTER to edit/activate", self.game.menu_color)
+            self.game.screen.addstr(3, 0, "Press ESC to exit without saving", self.game.menu_color)
+            self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Draw settings
+            for i, setting in enumerate(settings):
+                # Highlight the selected item
+                if i == current_selection:
+                    attr = self.game.menu_color | curses.A_BOLD
+                else:
+                    attr = self.game.menu_color
+                
+                # Draw the item
+                if setting["type"] == "key":
+                    key_name = self.key_bindings.get_key_name(setting["value"])
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {key_name}", attr)
+                else:
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}", attr)
+            
+            # Draw footer
+            self.game.screen.addstr(self.game.max_y - 2, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Refresh screen
+            self.game.screen.refresh()
+            
+            # Get input
+            key = self.game.screen.getch()
+            
+            # Handle input
+            if key == curses.KEY_UP:
+                current_selection = (current_selection - 1) % len(settings)
+            elif key == curses.KEY_DOWN:
+                current_selection = (current_selection + 1) % len(settings)
+            elif key == 10:  # Enter key
+                # Handle selection
+                setting = settings[current_selection]
+                if setting["type"] == "key":
+                    # Edit key binding
+                    new_key = self.edit_key_binding(setting["name"])
+                    if new_key is not None:
+                        self.key_bindings.gui_keys[setting["key"]] = new_key
+                        setting["value"] = new_key
+                elif setting["key"] == "reset":
+                    # Reset to defaults
+                    self.key_bindings.reset_to_defaults()
+                    # Update settings list
+                    for i, s in enumerate(settings):
+                        if s["type"] == "key":
+                            s["value"] = self.key_bindings.gui_keys[s["key"]]
+                elif setting["key"] == "save":
+                    # Save changes
+                    self.key_bindings.save_bindings()
+                    in_menu = False
+                elif setting["key"] == "cancel":
+                    # Cancel changes
+                    self.key_bindings.gui_keys = original_key_bindings
+                    in_menu = False
+            elif key == 27:  # Escape key
+                # Cancel changes
+                self.key_bindings.gui_keys = original_key_bindings
+                in_menu = False
+        
+        # Force redraw
+        self.game.needs_redraw = True
+        
+    def edit_key_binding(self, action_name):
+        """Edit a key binding for the 3D GUI."""
+        # Variables for editing
+        new_key = None
+        editing = True
+        
+        # Main loop for editing
+        while editing:
+            # Clear screen
+            self.game.screen.clear()
+            
+            # Draw header
+            self.game.screen.addstr(0, 0, f"Edit Key Binding: {action_name}", self.game.menu_color | curses.A_BOLD)
+            self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Draw instructions
+            self.game.screen.addstr(2, 0, "Press a key to bind it to this action", self.game.menu_color)
+            self.game.screen.addstr(3, 0, "Press ESC to cancel", self.game.menu_color)
+            self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Refresh screen
+            self.game.screen.refresh()
+            
+            # Get input
+            key = self.game.screen.getch()
+            
+            # Handle input
+            if key == 27:  # Escape key
+                editing = False
+            else:
+                # Return the new key
+                return key
+        
+        # Return None if cancelled
+        return None
 
     def add_debug_message(self, message):
         """Add a debug message to the list of messages to display."""
@@ -1665,3 +1844,181 @@ class GUI3DPlugin(Plugin):
             
             # Disable point sprites
             glDisable(GL_POINT_SMOOTH)
+
+    def show_3d_settings_menu(self):
+        """Show the 3D settings menu."""
+        # Store original settings in case user cancels
+        original_show_letters = self.show_letters
+        original_show_sticks = self.show_sticks
+        original_show_dots_without_sticks = self.show_dots_without_sticks
+        original_show_mesh = self.show_mesh
+        original_show_terrain_mesh = self.show_terrain_mesh
+        original_terrain_mesh_style = self.terrain_mesh_style
+        original_terrain_mesh_opacity = self.terrain_mesh_opacity
+        original_terrain_color_scheme = self.terrain_color_scheme
+        original_stick_dot_size = self.stick_dot_size
+        original_show_snake_connections = self.show_snake_connections
+        original_render_distance = self.render_distance
+        original_show_axes = self.show_axes
+        
+        # Create a list of settings
+        settings = [
+            {"name": "Show Letters", "value": self.show_letters, "type": "bool"},
+            {"name": "Show Sticks", "value": self.show_sticks, "type": "bool"},
+            {"name": "Show Dots Without Sticks", "value": self.show_dots_without_sticks, "type": "bool"},
+            {"name": "Show Mesh", "value": self.show_mesh, "type": "bool"},
+            {"name": "Show Terrain Mesh", "value": self.show_terrain_mesh, "type": "bool"},
+            {"name": "Terrain Mesh Style", "value": self.terrain_mesh_style, "type": "str"},
+            {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float", "min": 0.1, "max": 1.0, "step": 0.1},
+            {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"},
+            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float", "min": 1.0, "max": 20.0, "step": 1.0},
+            {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"},
+            {"name": "Render Distance", "value": self.render_distance, "type": "int", "min": 10, "max": 200, "step": 10},
+            {"name": "Show Axes", "value": self.show_axes, "type": "bool"},
+            {"name": "Save Settings", "value": None, "type": "button"},
+            {"name": "Cancel", "value": None, "type": "button"}
+        ]
+        
+        # Variables for menu navigation
+        current_selection = 0
+        in_menu = True
+        
+        # Main loop for settings menu
+        while in_menu:
+            # Clear screen
+            self.game.screen.clear()
+            
+            # Draw header
+            self.game.screen.addstr(0, 0, "3D Visualization Settings", self.game.menu_color | curses.A_BOLD)
+            self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Draw instructions
+            self.game.screen.addstr(2, 0, "Use ↑/↓ to navigate, ENTER to toggle/edit, ←/→ to adjust values", self.game.menu_color)
+            self.game.screen.addstr(3, 0, "Press ESC to exit without saving", self.game.menu_color)
+            self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Draw settings
+            for i, setting in enumerate(settings):
+                # Highlight the selected item
+                if i == current_selection:
+                    attr = self.game.menu_color | curses.A_BOLD
+                else:
+                    attr = self.game.menu_color
+                
+                # Draw the item
+                if setting["type"] == "bool":
+                    value_str = "Yes" if setting["value"] else "No"
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {value_str}", attr)
+                elif setting["type"] == "float" or setting["type"] == "int":
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
+                elif setting["type"] == "str":
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
+                else:
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}", attr)
+            
+            # Draw footer
+            self.game.screen.addstr(self.game.max_y - 2, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Refresh screen
+            self.game.screen.refresh()
+            
+            # Get input
+            key = self.game.screen.getch()
+            
+            # Handle input
+            if key == curses.KEY_UP:
+                current_selection = (current_selection - 1) % len(settings)
+            elif key == curses.KEY_DOWN:
+                current_selection = (current_selection + 1) % len(settings)
+            elif key == 10:  # Enter key
+                # Handle selection
+                setting = settings[current_selection]
+                if setting["type"] == "bool":
+                    # Toggle boolean value
+                    setting["value"] = not setting["value"]
+                elif setting["type"] == "button":
+                    if setting["name"] == "Save Settings":
+                        # Save settings
+                        self.show_letters = settings[0]["value"]
+                        self.show_sticks = settings[1]["value"]
+                        self.show_dots_without_sticks = settings[2]["value"]
+                        self.show_mesh = settings[3]["value"]
+                        self.show_terrain_mesh = settings[4]["value"]
+                        self.terrain_mesh_style = settings[5]["value"]
+                        self.terrain_mesh_opacity = settings[6]["value"]
+                        self.terrain_color_scheme = settings[7]["value"]
+                        self.stick_dot_size = settings[8]["value"]
+                        self.show_snake_connections = settings[9]["value"]
+                        self.render_distance = settings[10]["value"]
+                        self.show_axes = settings[11]["value"]
+                        self.save_settings()
+                        in_menu = False
+                    elif setting["name"] == "Cancel":
+                        # Restore original settings
+                        self.show_letters = original_show_letters
+                        self.show_sticks = original_show_sticks
+                        self.show_dots_without_sticks = original_show_dots_without_sticks
+                        self.show_mesh = original_show_mesh
+                        self.show_terrain_mesh = original_show_terrain_mesh
+                        self.terrain_mesh_style = original_terrain_mesh_style
+                        self.terrain_mesh_opacity = original_terrain_mesh_opacity
+                        self.terrain_color_scheme = original_terrain_color_scheme
+                        self.stick_dot_size = original_stick_dot_size
+                        self.show_snake_connections = original_show_snake_connections
+                        self.render_distance = original_render_distance
+                        self.show_axes = original_show_axes
+                        in_menu = False
+            elif key == curses.KEY_LEFT:
+                # Decrease value
+                setting = settings[current_selection]
+                if setting["type"] == "float":
+                    setting["value"] = max(setting["min"], setting["value"] - setting["step"])
+                elif setting["type"] == "int":
+                    setting["value"] = max(setting["min"], setting["value"] - setting["step"])
+                elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
+                    # Cycle through mesh style options
+                    if setting["value"] == "filled":
+                        setting["value"] = "wireframe"
+                    else:
+                        setting["value"] = "filled"
+                elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
+                    # Cycle through color scheme options
+                    schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
+                    idx = schemes.index(setting["value"])
+                    setting["value"] = schemes[(idx - 1) % len(schemes)]
+            elif key == curses.KEY_RIGHT:
+                # Increase value
+                setting = settings[current_selection]
+                if setting["type"] == "float":
+                    setting["value"] = min(setting["max"], setting["value"] + setting["step"])
+                elif setting["type"] == "int":
+                    setting["value"] = min(setting["max"], setting["value"] + setting["step"])
+                elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
+                    # Cycle through mesh style options
+                    if setting["value"] == "wireframe":
+                        setting["value"] = "filled"
+                    else:
+                        setting["value"] = "wireframe"
+                elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
+                    # Cycle through color scheme options
+                    schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
+                    idx = schemes.index(setting["value"])
+                    setting["value"] = schemes[(idx + 1) % len(schemes)]
+            elif key == 27:  # Escape key
+                # Restore original settings
+                self.show_letters = original_show_letters
+                self.show_sticks = original_show_sticks
+                self.show_dots_without_sticks = original_show_dots_without_sticks
+                self.show_mesh = original_show_mesh
+                self.show_terrain_mesh = original_show_terrain_mesh
+                self.terrain_mesh_style = original_terrain_mesh_style
+                self.terrain_mesh_opacity = original_terrain_mesh_opacity
+                self.terrain_color_scheme = original_terrain_color_scheme
+                self.stick_dot_size = original_stick_dot_size
+                self.show_snake_connections = original_show_snake_connections
+                self.render_distance = original_render_distance
+                self.show_axes = original_show_axes
+                in_menu = False
+        
+        # Force redraw
+        self.game.needs_redraw = True
