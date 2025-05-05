@@ -63,14 +63,18 @@ class GUI3DPlugin(Plugin):
         self.lock = threading.Lock()  # Lock for thread safety
         self.snakes = []  # List to store snake data for connected rendering
         self.debug_messages = []  # List to store debug messages
-        self.max_debug_messages = 2  # Maximum number of debug messages to display
+        self.max_debug_messages = 5  # Maximum number of debug messages to display
+        
+        # Camera movement
+        self.camera_move_speed = 1.0  # Units per keypress
+        self.handle_3d_input = True  # Whether to handle keyboard input in 3D view
         
         # Display options
         self.show_letters = True
         self.show_sticks = True
-        self.show_dots_without_sticks = False  # New option to show dots without sticks
+        self.show_dots_without_sticks = False
         self.show_mesh = True
-        self.show_terrain_mesh = False  # New option for terrain mesh
+        self.show_terrain_mesh = False
         self.terrain_mesh_style = "filled"  # Options: "filled", "wireframe"
         self.terrain_mesh_opacity = 0.7  # 0.0 to 1.0
         self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
@@ -574,6 +578,18 @@ class GUI3DPlugin(Plugin):
             
         return (r, g, b)
     
+    def render(self, screen):
+        """Render the plugin on the curses screen.
+        
+        This method is required by the Plugin base class, but we don't need to
+        render anything on the curses screen since we're using a separate window.
+        """
+        # We don't need to render anything on the curses screen
+        # Our rendering happens in the separate PyGame window
+        
+        # Render debug messages
+        self.render_debug_messages(screen)
+    
     def run_gui(self):
         """Run the GUI in a separate thread."""
         try:
@@ -640,6 +656,10 @@ class GUI3DPlugin(Plugin):
                                 self.rotation_x += dy * 0.5
                             self.last_mouse_pos = (x, y)
                 
+                # Handle keyboard input for camera-relative movement
+                if self.handle_3d_input:
+                    self.handle_camera_movement()
+                
                 # Render the scene using our dedicated method
                 self.render_scene()
                 
@@ -652,6 +672,53 @@ class GUI3DPlugin(Plugin):
         finally:
             pygame.quit()
             
+    def handle_camera_movement(self):
+        """Handle keyboard input for camera-relative movement."""
+        # Get pressed keys
+        keys = pygame.key.get_pressed()
+        
+        # Calculate movement direction based on camera rotation
+        # Convert rotation angles to radians
+        rotation_y_rad = math.radians(self.rotation_y)
+        
+        # Calculate forward and right vectors based on camera rotation
+        # In our coordinate system:
+        # - Forward is along the negative Z axis when rotation_y = 0
+        # - Right is along the positive X axis when rotation_y = 0
+        forward_x = -math.sin(rotation_y_rad)
+        forward_z = -math.cos(rotation_y_rad)
+        
+        right_x = math.cos(rotation_y_rad)
+        right_z = -math.sin(rotation_y_rad)
+        
+        # Initialize movement vector
+        move_x = 0
+        move_z = 0
+        
+        # Apply movement based on arrow keys
+        if keys[pygame.K_UP]:
+            # Move forward
+            move_x += forward_x * self.camera_move_speed
+            move_z += forward_z * self.camera_move_speed
+        if keys[pygame.K_DOWN]:
+            # Move backward
+            move_x -= forward_x * self.camera_move_speed
+            move_z -= forward_z * self.camera_move_speed
+        if keys[pygame.K_RIGHT]:
+            # Move right
+            move_x += right_x * self.camera_move_speed
+            move_z += right_z * self.camera_move_speed
+        if keys[pygame.K_LEFT]:
+            # Move left
+            move_x -= right_x * self.camera_move_speed
+            move_z -= right_z * self.camera_move_speed
+            
+        # Apply movement to game world coordinates if any movement occurred
+        if move_x != 0 or move_z != 0:
+            self.game.world_x += move_x
+            self.game.world_y += move_z  # Note: game's Y is our Z in 3D space
+            self.game.needs_redraw = True
+    
     def render_scene(self):
         """Render the 3D scene."""
         # Clear the screen and depth buffer
@@ -1598,15 +1665,3 @@ class GUI3DPlugin(Plugin):
             
             # Disable point sprites
             glDisable(GL_POINT_SMOOTH)
-
-    def render(self, screen):
-        """Render the plugin on the curses screen.
-        
-        This method is required by the Plugin base class, but we don't need to
-        render anything on the curses screen since we're using a separate window.
-        """
-        # We don't need to render anything on the curses screen
-        # Our rendering happens in the separate PyGame window
-        
-        # Render debug messages
-        self.render_debug_messages(screen)

@@ -654,8 +654,9 @@ class TextAdventure:
     def render_coordinate_notches(self):
         """Render coordinate notches on the left and top of the game world."""
         # Calculate the world coordinates for the visible area
-        start_x = self.world_x - self.max_x // 2
-        start_y = self.world_y - self.max_y // 2
+        # Convert to integers to avoid float issues
+        start_x = int(round(self.world_x)) - self.max_x // 2
+        start_y = int(round(self.world_y)) - self.max_y // 2
         end_x = start_x + self.max_x
         end_y = start_y + self.max_y
         
@@ -847,6 +848,12 @@ class TextAdventure:
 
     def get_char_at(self, x, y):
         """Get the character at world coordinates (x, y)"""
+        # Convert coordinates to integers if they are floats
+        if isinstance(x, float):
+            x = int(round(x))
+        if isinstance(y, float):
+            y = int(round(y))
+            
         # Check if we have this character in the cache
         cache_key = f"{x},{y}"
         if cache_key in self.char_cache:

@@ -57,12 +57,16 @@ class GraphClassifier:
         Classify coordinates (x, y) to determine an ASCII character.
         Returns a byte value between 33 and 126 (printable ASCII).
         """
+        # Convert coordinates to floats
+        x_float = float(x) if not isinstance(x, float) else x
+        y_float = float(y) if not isinstance(y, float) else y
+        
         # Determine which region the point belongs to
-        region_idx = self.get_region(x, y)
+        region_idx = self.get_region(x_float, y_float)
         
         # Use the appropriate classifier for this region
         classifier = self.classifiers[region_idx % len(self.classifiers)]
-        value = classifier(x, y)
+        value = classifier(x_float, y_float)
         
         # Ensure the value is in the printable ASCII range (33-126)
         return 33 + (value % 94)
@@ -82,24 +86,28 @@ class GraphClassifier:
     
     def perlin_noise_classifier(self, x, y):
         """Classifier based on Perlin noise."""
+        # Convert coordinates to floats
+        x_float = float(x) if not isinstance(x, float) else x
+        y_float = float(y) if not isinstance(y, float) else y
+        
         # Scale down coordinates
-        x, y = x / 50.0, y / 50.0
+        x_float, y_float = x_float / 50.0, y_float / 50.0
         
         # Get grid cell coordinates
-        x0, y0 = int(math.floor(x)), int(math.floor(y))
+        x0, y0 = int(math.floor(x_float)), int(math.floor(y_float))
         x1, y1 = x0 + 1, y0 + 1
         
         # Get interpolation weights
-        sx = x - x0
-        sy = y - y0
+        sx = x_float - x0
+        sy = y_float - y0
         
         # Interpolate between grid point gradients
-        n0 = self.dot_grid_gradient(x0, y0, x, y)
-        n1 = self.dot_grid_gradient(x1, y0, x, y)
+        n0 = self.dot_grid_gradient(x0, y0, x_float, y_float)
+        n1 = self.dot_grid_gradient(x1, y0, x_float, y_float)
         ix0 = self.interpolate(n0, n1, sx)
         
-        n0 = self.dot_grid_gradient(x0, y1, x, y)
-        n1 = self.dot_grid_gradient(x1, y1, x, y)
+        n0 = self.dot_grid_gradient(x0, y1, x_float, y_float)
+        n1 = self.dot_grid_gradient(x1, y1, x_float, y_float)
         ix1 = self.interpolate(n0, n1, sx)
         
         value = self.interpolate(ix0, ix1, sy)
@@ -126,22 +134,33 @@ class GraphClassifier:
     
     def sine_wave_classifier(self, x, y):
         """Classifier based on sine waves."""
-        value = 127.5 * (
-            math.sin(x / 20.0) + 
-            math.sin(y / 15.0) + 
-            math.sin((x + y) / 25.0) + 
-            math.sin(math.sqrt(x*x + y*y) / 10.0)
+        # Convert coordinates to floats
+        x_float = float(x) if not isinstance(x, float) else x
+        y_float = float(y) if not isinstance(y, float) else y
+        
+        # Use sine waves with different frequencies and phases
+        value = (
+            math.sin(x_float / 10.0) * 50 +
+            math.sin(y_float / 15.0) * 50 +
+            math.sin((x_float + y_float) / 20.0) * 50 +
+            math.sin(math.sqrt(x_float**2 + y_float**2) / 10.0) * 50
         )
-        return int(abs(value)) % 256
+        
+        # Scale to 0-255 range
+        return int((value + 200) % 256)
     
     def cellular_automaton_classifier(self, x, y):
         """Classifier based on cellular automaton patterns."""
+        # Convert coordinates to integers if they are floats
+        x_int = int(round(x)) if isinstance(x, float) else x
+        y_int = int(round(y)) if isinstance(y, float) else y
+        
         # Use coordinates to seed a simple 1D cellular automaton
-        cell_x = abs(x) % 256
+        cell_x = abs(x_int) % 256
         
         # Run the automaton for y steps
         state = cell_x
-        for _ in range(abs(y) % 100):
+        for _ in range(abs(y_int) % 100):
             # Apply rule
             left = (state << 1) % 256
             right = (state >> 1) % 256
@@ -151,46 +170,50 @@ class GraphClassifier:
         return state
     
     def voronoi_classifier(self, x, y):
-        """Classifier based on Voronoi diagrams."""
-        # Find the two closest Voronoi points
-        distances = []
+        """Classifier based on Voronoi cells."""
+        # Convert coordinates to floats
+        x_float = float(x) if not isinstance(x, float) else x
+        y_float = float(y) if not isinstance(y, float) else y
         
-        for px, py in self.voronoi_points:
-            dist = math.sqrt((x - px)**2 + (y - py)**2)
-            distances.append(dist)
-            
-        # Sort distances
-        distances.sort()
+        # Find the closest point
+        min_dist = float('inf')
+        closest_idx = 0
         
-        # Use the difference between the two closest points
-        if len(distances) >= 2:
-            value = int(abs(distances[1] - distances[0]) * 10) % 256
-        else:
-            value = 0
-            
-        return value
+        for i, (px, py) in enumerate(self.voronoi_points):
+            dist = (x_float - px)**2 + (y_float - py)**2
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = i
+                
+        # Use the index of the closest point as the value
+        return closest_idx % 256
     
     def fractal_classifier(self, x, y):
         """Classifier based on fractal patterns (simplified Mandelbrot)."""
-        # Scale coordinates
-        scaled_x = x / 200.0
-        scaled_y = y / 200.0
+        # Convert coordinates to floats
+        x_float = float(x) if not isinstance(x, float) else x
+        y_float = float(y) if not isinstance(y, float) else y
         
-        # Initialize complex number
-        c = complex(scaled_x, scaled_y)
-        z = complex(0, 0)
+        # Scale coordinates to the appropriate range for Mandelbrot
+        c_real = x_float / 100.0
+        c_imag = y_float / 100.0
+        
+        # Initialize z
+        z_real, z_imag = 0.0, 0.0
         
         # Iterate
         iteration = 0
-        max_iter = 20
+        max_iteration = 20
         
-        while abs(z) < 2 and iteration < max_iter:
-            z = z*z + c
+        while z_real*z_real + z_imag*z_imag < 4 and iteration < max_iteration:
+            # z = z^2 + c
+            temp = z_real*z_real - z_imag*z_imag + c_real
+            z_imag = 2*z_real*z_imag + c_imag
+            z_real = temp
             iteration += 1
             
         # Map iteration count to a value
-        value = int(iteration / max_iter * 255)
-        return value
+        return int((iteration * 12) % 256)
 
 
 class GraphClassifierPlugin(Plugin):

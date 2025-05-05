@@ -283,6 +283,12 @@ class Polygraph3DPlugin(Plugin):
     
     def get_height(self, x, y):
         """Get the height value for coordinates (x, y)."""
+        # Convert coordinates to integers if they are floats
+        if isinstance(x, float):
+            x = int(round(x))
+        if isinstance(y, float):
+            y = int(round(y))
+            
         # Check if the height is already cached
         key = f"{x},{y}"
         if key in self.height_map:
@@ -372,35 +378,42 @@ class Polygraph3DPlugin(Plugin):
             
             # Now visualize all cached terrain points, not just the visible area
             for key, height in self.height_map.items():
-                # Parse the coordinates from the key
-                world_x, world_y = map(int, key.split(','))
-                
-                # Get the character at this position
-                char = self_gui.game.get_char_at(world_x, world_y)
-                
-                # If there's no character (e.g., it's outside the loaded area), use a default
-                if char == ' ':
-                    char = '.'  # Use a dot to represent terrain without a character
-                
-                # Determine color based on character
-                color = self_gui.get_color_for_char(char, world_x, world_y)
-                
-                # Calculate the visual height
-                visual_height = height / self.height_scale
-                
-                # Create a 3D character object with the explicit height value
-                char_obj = Character3D(
-                    char, 
-                    world_x - self_gui.game.world_x, 
-                    world_y - self_gui.game.world_y, 
-                    color,
-                    height=visual_height  # Pass height directly
-                )
-                
-                # Add to the character map
-                with self_gui.lock:
-                    char_key = f"{world_x},{world_y}"
-                    self_gui.characters[char_key] = char_obj
+                try:
+                    # Parse the coordinates from the key
+                    # Handle floating-point coordinates by converting to float first, then to int
+                    coords = key.split(',')
+                    world_x = int(float(coords[0]))
+                    world_y = int(float(coords[1]))
+                    
+                    # Get the character at this position
+                    char = self_gui.game.get_char_at(world_x, world_y)
+                    
+                    # If there's no character (e.g., it's outside the loaded area), use a default
+                    if char == ' ':
+                        char = '.'  # Use a dot to represent terrain without a character
+                    
+                    # Determine color based on character
+                    color = self_gui.get_color_for_char(char, world_x, world_y)
+                    
+                    # Calculate the visual height
+                    visual_height = height / self.height_scale
+                    
+                    # Create a 3D character object with the explicit height value
+                    char_obj = Character3D(
+                        char, 
+                        world_x - self_gui.game.world_x, 
+                        world_y - self_gui.game.world_y, 
+                        color,
+                        height=visual_height  # Pass height directly
+                    )
+                    
+                    # Add to the character map
+                    with self_gui.lock:
+                        char_key = f"{world_x},{world_y}"
+                        self_gui.characters[char_key] = char_obj
+                except ValueError as e:
+                    # Skip invalid coordinates
+                    continue
         
         # Replace the method - this is the key fix
         gui_plugin.update_character_map = lambda: new_update_character_map(gui_plugin)

@@ -6,7 +6,7 @@ import curses
 class Snake:
     """A snake that moves around the game world."""
     
-    def __init__(self, x, y, game):
+    def __init__(self, game, x, y):
         self.x = x
         self.y = y
         self.length = 3
@@ -36,14 +36,19 @@ class Snake:
             # Check if there's an egg at the new position
             world_x = new_head[0] + self.game.world_x
             world_y = new_head[1] + self.game.world_y
-            location_id = (world_x + world_y * 1000) % 127
+            
+            # Convert world coordinates to integers before calculating location_id
+            int_world_x = int(round(world_x))
+            int_world_y = int(round(world_y))
+            
+            location_id = (int_world_x + int_world_y * 1000) % 127
             if chr(location_id) == '0':  # Found an egg
                 # Only grow if we haven't reached max length
                 if self.length < self.max_length:
                     self.length += 1
                 # Create a space where the egg was
-                space_key = hashlib.md5(f"{world_x},{world_y}".encode()).hexdigest()
-                self.game.spaces[space_key] = (world_x, world_y)
+                space_key = hashlib.md5(f"{int_world_x},{int_world_y}".encode()).hexdigest()
+                self.game.spaces[space_key] = (int_world_x, int_world_y)
                 self.game.save_spaces()
                 
             # Add the new head
@@ -111,6 +116,7 @@ class SnakePlugin(Plugin):
         self.snakes = []
         self.spawn_timer = 0
         self.spawn_interval = 10  # seconds between snake spawns
+        self.max_snakes = 5
         
     def update(self, dt):
         """Update all snakes and potentially spawn new ones."""
@@ -158,28 +164,28 @@ class SnakePlugin(Plugin):
                         break
             
     def try_spawn_snake(self):
-        """Try to spawn a new snake at a random @ character."""
-        # Limit the number of snakes
-        if len(self.snakes) >= 5:
-            return
+        """Try to spawn a new snake at a random location."""
+        if len(self.snakes) >= self.max_snakes:
+            return False
             
-        # Find all @ characters on screen
-        at_positions = []
-        for y in range(self.game.max_y):
-            for x in range(self.game.max_x):
-                world_x = x - self.game.max_x // 2 + self.game.world_x
-                world_y = y - self.game.max_y // 2 + self.game.world_y
-                location_id = (world_x + world_y * 1000) % 127
-                if chr(location_id) == '@':
-                    at_positions.append((x - self.game.max_x // 2, y - self.game.max_y // 2))
-                    
-        if at_positions:
-            # Choose a random @ position
-            x, y = random.choice(at_positions)
-            self.snakes.append(Snake(x, y, self.game))
+        # Try to find a good spawn location
+        for _ in range(10):  # Try 10 times
+            # Choose a random location near the player
+            offset_x = random.randint(-10, 10)
+            offset_y = random.randint(-10, 10)
+            world_x = self.game.world_x + offset_x
+            world_y = self.game.world_y + offset_y
             
-            # Create a space where the snake spawned
-            world_x = x + self.game.world_x
-            world_y = y + self.game.world_y
-            space_key = hashlib.md5(f"{world_x},{world_y}".encode()).hexdigest()
-            self.game.spaces[space_key] = (world_x, world_y)
+            # Check if the location is suitable (near a plant)
+            # Convert world coordinates to integers before calculating location_id
+            int_world_x = int(round(world_x))
+            int_world_y = int(round(world_y))
+            
+            location_id = (int_world_x + int_world_y * 1000) % 127
+            if chr(location_id) == '@':
+                # Create a new snake
+                snake = Snake(self.game, offset_x, offset_y)
+                self.snakes.append(snake)
+                return True
+                
+        return False
