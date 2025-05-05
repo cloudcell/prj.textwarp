@@ -23,8 +23,8 @@ DEFAULT_GUI_KEYS = {
     "move_backward": pygame.K_DOWN,
     "strafe_left": pygame.K_q,
     "strafe_right": pygame.K_e,
-    "rotate_ccw": pygame.K_LEFT,
-    "rotate_cw": pygame.K_RIGHT,
+    "rotate_ccw": pygame.K_RIGHT,
+    "rotate_cw": pygame.K_LEFT,
 }
 
 # Key name mappings for display

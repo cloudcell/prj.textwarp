@@ -100,7 +100,7 @@ class GUI3DPlugin(Plugin):
         self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
         self.stick_dot_size = 8.0  # Size of dots at the end of sticks
         self.show_snake_connections = True  # New option to show snakes as connected balls
-        self.render_distance = 100  # New option to control how far to render
+        self.render_distance = 500  # New option to control how far to render
         self.show_axes = True  # New option to show or hide the 3D axes
         
         # Load settings if they exist
@@ -1386,7 +1386,7 @@ class GUI3DPlugin(Plugin):
                 self.terrain_color_scheme = settings.get("terrain_color_scheme", "height")
                 self.stick_dot_size = settings.get("stick_dot_size", 8.0)
                 self.show_snake_connections = settings.get("show_snake_connections", True)
-                self.render_distance = settings.get("render_distance", 100)
+                self.render_distance = settings.get("render_distance", 500)
                 self.show_axes = settings.get("show_axes", True)
                 self.show_zero_level_grid = settings.get("show_zero_level_grid", True)
                 self.ascii_intensity = settings.get("ascii_intensity", True)
@@ -1684,7 +1684,7 @@ class GUI3DPlugin(Plugin):
             self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
             
             # Draw instructions
-            self.game.screen.addstr(2, 0, "Use ↑/↓ to select, ENTER to edit/activate", self.game.menu_color)
+            self.game.screen.addstr(2, 0, "Use ↑/↓ to select, ENTER to edit/activate, ←/→ to adjust values", self.game.menu_color)
             self.game.screen.addstr(3, 0, "Press ESC to exit without saving", self.game.menu_color)
             self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
             

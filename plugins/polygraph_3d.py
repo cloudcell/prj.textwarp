@@ -316,7 +316,7 @@ class Polygraph3DPlugin(Plugin):
             if char:
                 # Add (ASCII code - 64) / 10 to the height
                 # This makes uppercase letters (A-Z) have values from 0.1 to 2.6
-                ascii_height = (ord(char) - 64) / 2.0
+                ascii_height = (ord(char) - 64) * 4
                 
                 # Ensure the ASCII component is within reasonable bounds
                 ascii_height = max(-5, min(5, ascii_height))
