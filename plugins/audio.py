@@ -22,6 +22,7 @@ class AudioPlugin(Plugin):
         self.show_track_info = True  # Show track info in the game UI
         self.track_info_timeout = 0.0  # Timeout for displaying track info
         self.track_info_duration = 5.0  # How long to display track info
+        self.last_played_track = None  # Remember the last played track
         
         # Audio analysis for visualization
         self.beat_intensity = 0.0  # Current beat intensity (0.0 to 1.0)
@@ -67,9 +68,17 @@ class AudioPlugin(Plugin):
                 # Scan for music files
                 self.refresh_playlist()
                 
-                # Start playing if auto_play is enabled and we have tracks
+                # Start playing if play_on_start is enabled
                 if self.play_on_start and self.playlist:
-                    self.play_random()
+                    # If we have a last played track, use that
+                    if self.last_played_track and os.path.exists(self.last_played_track) and self.last_played_track in self.playlist:
+                        self.play(self.last_played_track)
+                        track_name = os.path.basename(self.last_played_track)
+                        self.game.message = f"Resuming: {track_name}"
+                        self.game.message_timeout = 3.0
+                    else:
+                        # Otherwise play a random track
+                        self.play_random()
                     
                 # Start a thread for audio analysis
                 self.analysis_thread = threading.Thread(target=self.analyze_audio_thread, daemon=True)
@@ -89,12 +98,18 @@ class AudioPlugin(Plugin):
         """Update the plugin state."""
         if not self.active or not self.initialized:
             return
-            
+        
         # Check if music has stopped and we need to play the next track
-        if self.is_playing and not pygame.mixer.music.get_busy():
-            if self.auto_play:
-                self.play_random()
-                
+        try:
+            if self.is_playing and not pygame.mixer.music.get_busy():
+                if self.auto_play:
+                    self.play_random()
+        except pygame.error as e:
+            # Handle mixer not initialized error gracefully
+            self.is_playing = False
+            self.game.message = f"Audio analysis error: {e}"
+            self.game.message_timeout = 3.0
+            
         # Update track info timeout
         if self.track_info_timeout > 0:
             self.track_info_timeout -= dt
@@ -289,6 +304,8 @@ class AudioPlugin(Plugin):
             f"Play on Start: {'Yes' if self.play_on_start else 'No'}",
             f"Show Track Info: {'Yes' if self.show_track_info else 'No'}",
             f"{'Pause' if self.is_playing else 'Play'}",
+            "Play Next Track",
+            "Play Previous Track",
             "Play Random Track",
             "Refresh Playlist",
             f"Tracks: {len(self.playlist)}",
@@ -354,13 +371,19 @@ class AudioPlugin(Plugin):
                         else:
                             self.play_random()
                     menu_options[4] = f"{'Pause' if self.is_playing else 'Play'}"
-                elif current_selection == 5:  # Play Random
+                elif current_selection == 5:  # Play Next Track
+                    self.play_next_track()
+                    menu_options[4] = "Pause" if self.is_playing else "Play"
+                elif current_selection == 6:  # Play Previous Track
+                    self.play_previous_track()
+                    menu_options[4] = "Pause" if self.is_playing else "Play"
+                elif current_selection == 7:  # Play Random
                     self.play_random()
                     menu_options[4] = "Pause" if self.is_playing else "Play"
-                elif current_selection == 6:  # Refresh Playlist
+                elif current_selection == 8:  # Refresh Playlist
                     self.refresh_playlist()
-                    menu_options[7] = f"Tracks: {len(self.playlist)}"
-                elif current_selection == 8:  # Back
+                    menu_options[9] = f"Tracks: {len(self.playlist)}"
+                elif current_selection == 10:  # Back
                     # Save settings
                     self.save_settings()
                     in_audio_menu = False
@@ -381,12 +404,18 @@ class AudioPlugin(Plugin):
         """Load audio settings from a file."""
         try:
             import json
-            with open("audio_settings.json", "r") as f:
-                settings = json.load(f)
-                self.volume = settings.get("volume", 0.7)
-                self.auto_play = settings.get("auto_play", True)
-                self.show_track_info = settings.get("show_track_info", True)
-                self.play_on_start = settings.get("play_on_start", True)
+            if os.path.exists("audio_settings.json"):
+                with open("audio_settings.json", "r") as f:
+                    settings = json.load(f)
+                    self.volume = settings.get("volume", 0.5)
+                    self.auto_play = settings.get("auto_play", True)
+                    self.show_track_info = settings.get("show_track_info", True)
+                    self.play_on_start = settings.get("play_on_start", True)
+                    self.last_played_track = settings.get("last_played_track", None)
+                    
+                    # Validate last_played_track exists
+                    if self.last_played_track and not os.path.exists(self.last_played_track):
+                        self.last_played_track = None
         except:
             # Use default settings if file doesn't exist or is invalid
             pass
@@ -399,10 +428,73 @@ class AudioPlugin(Plugin):
                 "volume": self.volume,
                 "auto_play": self.auto_play,
                 "show_track_info": self.show_track_info,
-                "play_on_start": self.play_on_start
+                "play_on_start": self.play_on_start,
+                "last_played_track": self.current_track
             }
             with open("audio_settings.json", "w") as f:
                 json.dump(settings, f)
         except:
             # Ignore errors if the file can't be written
             pass
+
+    def play_next_track(self):
+        """Play the next track in the playlist or start from the beginning."""
+        if not self.playlist:
+            self.game.message = "No tracks available"
+            self.game.message_timeout = 3.0
+            return
+            
+        if not self.current_track:
+            # No current track, play the first one
+            self.play(self.playlist[0])
+            return
+            
+        try:
+            # Find the current track in the playlist
+            current_index = self.playlist.index(self.current_track)
+            # Get the next track (or loop back to the beginning)
+            next_index = (current_index + 1) % len(self.playlist)
+            next_track = self.playlist[next_index]
+            
+            # Play the next track
+            self.play(next_track)
+            
+            # Show a message
+            track_name = os.path.basename(next_track)
+            self.game.message = f"Playing: {track_name}"
+            self.game.message_timeout = 3.0
+            self.track_info_timeout = 5.0
+        except ValueError:
+            # Current track not in playlist, play a random one
+            self.play_random()
+
+    def play_previous_track(self):
+        """Play the previous track in the playlist or play the last track if at the beginning."""
+        if not self.playlist:
+            self.game.message = "No tracks available"
+            self.game.message_timeout = 3.0
+            return
+            
+        if not self.current_track:
+            # No current track, play the last one in the playlist
+            self.play(self.playlist[-1])
+            return
+            
+        try:
+            # Find the current track in the playlist
+            current_index = self.playlist.index(self.current_track)
+            # Get the previous track (or loop back to the end)
+            prev_index = (current_index - 1) % len(self.playlist)
+            prev_track = self.playlist[prev_index]
+            
+            # Play the previous track
+            self.play(prev_track)
+            
+            # Show a message
+            track_name = os.path.basename(prev_track)
+            self.game.message = f"Playing: {track_name}"
+            self.game.message_timeout = 3.0
+            self.track_info_timeout = 5.0
+        except ValueError:
+            # Current track not in playlist, play a random one
+            self.play_random()

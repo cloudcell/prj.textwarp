@@ -92,6 +92,9 @@ class GUI3DPlugin(Plugin):
         self.show_dots_without_sticks = False
         self.show_mesh = True
         self.show_terrain_mesh = False
+        self.show_zero_level_grid = True  # Show a grid at zero height level
+        self.ascii_intensity = True  # Adjust dot intensity based on ASCII value
+        self.ascii_height = False  # Use ASCII value to determine height
         self.terrain_mesh_style = "filled"  # Options: "filled", "wireframe"
         self.terrain_mesh_opacity = 0.7  # 0.0 to 1.0
         self.terrain_color_scheme = "height"  # Options: "height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"
@@ -341,26 +344,33 @@ class GUI3DPlugin(Plugin):
                     continue
                     
                 # Calculate world coordinates
-                world_coord_x = x + self.game.world_x
-                world_coord_y = y + self.game.world_y
+                world_x_pos = x - max_x // 2 + world_x
+                world_y_pos = y - max_y // 2 + world_y
+                
+                # Get relative coordinates
+                rel_x = x - max_x // 2
+                rel_y = y - max_y // 2
                 
                 # Get color for this character
-                color = self.get_color_for_char(char, world_coord_x, world_coord_y)
+                color = self.get_color_for_char(char, rel_x, rel_y)
                 
-                # Create a Character3D object
-                char_obj = Character3D(char, x, y, color)
+                # Create a 3D character object
+                char_obj = Character3D(char, rel_x, rel_y, color)
                 
-                # Set height if a height plugin is available
-                if height_plugin:
+                # Override height if using ASCII height or if a height plugin is available
+                if self.ascii_height:
+                    # Use ASCII value to determine height (scale between 0.5 and 5.0)
+                    ascii_val = ord(char)
+                    char_obj.height = 0.5 + (ascii_val / 255.0) * 4.5
+                elif height_plugin:
                     try:
-                        height = height_plugin.get_height(world_coord_x, world_coord_y)
-                        char_obj.height = height / 10.0  # Scale height to a reasonable range
+                        char_obj.height = height_plugin.get_height(world_x_pos, world_y_pos) / 10.0
                     except:
                         pass  # Use default height if there's an error
                 
-                # Add to the characters dictionary
+                # Add the character to our map
                 with self.lock:
-                    self.characters[(x, y)] = char_obj
+                    self.characters[(rel_x, rel_y)] = char_obj
         
         # Add remote players if network plugin is active
         for plugin in self.game.plugins:
@@ -746,50 +756,54 @@ class GUI3DPlugin(Plugin):
     
     def render_scene(self):
         """Render the 3D scene."""
-        # Clear the screen and depth buffer
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glClearColor(0.0, 0.0, 0.0, 1.0)
-        
-        # Set up the modelview matrix
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        
-        # Apply camera transformations
-        glTranslatef(0, 0, self.zoom)
-        glRotatef(self.rotation_x, 1, 0, 0)
-        glRotatef(self.rotation_y, 0, 1, 0)
-        glRotatef(self.rotation_z, 0, 0, 1)
-        
-        # Add debug message with snake information (without any prefix)
-        debug_info = self.render_debug_info()
-        if debug_info:
-            self.add_debug_message(debug_info)
-        
-        # Draw coordinate axes if enabled
-        if self.show_axes:
-            self.draw_axes()
-        
-        # Draw the ground plane
-        self.draw_ground_plane()
-        
-        # Draw vertical lines (sticks) if enabled
-        if self.show_sticks or self.show_dots_without_sticks:
-            self.draw_vertical_lines()
-        
-        # Draw terrain mesh if enabled
-        if self.show_terrain_mesh:
-            self.draw_terrain_mesh()
-        
-        # Draw characters if enabled
-        if self.show_letters:
-            self.draw_characters()
-        
-        # Draw snakes as connected balls
-        self.draw_connected_snakes()
-        
-        # Update the display
-        pygame.display.flip()
-        
+        try:
+            # Clear the screen and depth buffer
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            glClearColor(0.0, 0.0, 0.0, 1.0)
+            
+            # Set up the modelview matrix
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
+            
+            # Apply camera transformations
+            glTranslatef(0, 0, self.zoom)
+            glRotatef(self.rotation_x, 1, 0, 0)
+            glRotatef(self.rotation_y, 0, 1, 0)
+            glRotatef(self.rotation_z, 0, 0, 1)
+            
+            # Add debug message with snake information (without any prefix)
+            debug_info = self.render_debug_info()
+            if debug_info:
+                self.add_debug_message(debug_info)
+            
+            # Draw coordinate axes if enabled
+            if self.show_axes:
+                self.draw_axes()
+            
+            # Draw the ground plane
+            self.draw_ground_plane()
+            
+            # Draw vertical lines (sticks) if enabled
+            if self.show_sticks or self.show_dots_without_sticks:
+                self.draw_vertical_lines()
+            
+            # Draw terrain mesh if enabled
+            if self.show_terrain_mesh:
+                self.draw_terrain_mesh()
+            
+            # Draw characters if enabled
+            if self.show_letters:
+                self.draw_characters()
+            
+            # Draw snakes as connected balls
+            self.draw_connected_snakes()
+            
+            # Update the display
+            pygame.display.flip()
+        except Exception as e:
+            # Log the error but don't crash
+            self.add_debug_message(f"Error rendering scene: {e}")
+    
     def render_debug_info(self):
         """Generate debug information string."""
         # Format the debug information string with specific content
@@ -906,131 +920,139 @@ class GUI3DPlugin(Plugin):
         
     def draw_connected_snakes(self):
         """Draw snakes as balls connected by lines."""
-        if not self.snakes:
-            return
-            
-        self.add_debug_message(f"Drawing {len(self.snakes)} snakes")  # Debug output
-        
-        # Save current OpenGL state
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
-        
-        # Disable depth test temporarily to ensure snakes are visible
-        glDisable(GL_DEPTH_TEST)
-        
-        # Enable lighting for better 3D appearance
-        glEnable(GL_LIGHTING)
-        glEnable(GL_LIGHT0)
-        
-        # Set up a stronger light for better visibility
-        glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
-        glLightfv(GL_LIGHT0, GL_AMBIENT, (0.4, 0.4, 0.4, 1))
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1))
-        glLightfv(GL_LIGHT0, GL_SPECULAR, (1.0, 1.0, 1.0, 1))
-        
-        # Enable blending for transparency
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        # Get audio plugin for beat synchronization
-        audio_plugin = None
-        for plugin in self.game.plugins:
-            if plugin.__class__.__name__ == "AudioPlugin" and plugin.active:
-                audio_plugin = plugin
-                break
-        
-        # Draw each snake
-        for snake_idx, snake in enumerate(self.snakes):
-            # Skip empty snakes
-            if not snake:
-                continue
+        try:
+            if not self.snakes:
+                return
                 
-            self.add_debug_message(f"Snake {snake_idx} has {len(snake)} segments")  # Debug output
+            self.add_debug_message(f"Drawing {len(self.snakes)} snakes")  # Debug output
             
-            if len(snake) < 2:
-                continue  # Need at least 2 segments to draw connections
-                
-            # Draw the connecting lines first (behind the balls)
-            glDisable(GL_LIGHTING)  # Disable lighting for lines
-            glLineWidth(5.0)  # Thicker lines for better visibility
+            # Save current OpenGL state
+            glPushAttrib(GL_ALL_ATTRIB_BITS)
             
-            # Draw lines with bright colors
-            glBegin(GL_LINE_STRIP)
-            for segment in snake:
-                pos = segment['position']
-                color = segment['color']
-                # Make the line fully opaque
-                glColor4f(color[0], color[1], color[2], 1.0)
-                glVertex3f(pos[0], pos[1], pos[2])  # Use the correct position coordinates
-            glEnd()
+            # Disable depth test temporarily to ensure snakes are visible
+            glDisable(GL_DEPTH_TEST)
             
-            # Re-enable lighting for spheres
+            # Enable lighting for better 3D appearance
             glEnable(GL_LIGHTING)
+            glEnable(GL_LIGHT0)
             
-            # Now draw the balls (spheres) for each segment
-            for segment_idx, segment in enumerate(snake):
-                pos = segment['position']
-                color = segment['color']
-                segment_type = segment['type']
-                
-                # Push matrix for this segment
-                glPushMatrix()
-                
-                # Position the sphere
-                glTranslatef(pos[0], pos[1], pos[2])  # Use the correct position coordinates
-                
-                # Get audio intensity for this snake (if audio plugin is active)
-                intensity = 1.0
-                if audio_plugin and segment_type == 'head':
-                    intensity = audio_plugin.get_snake_head_intensity(snake_idx)
-                    # Make the head pulse with the music
-                    color = (
-                        min(1.0, color[0] * (0.5 + 1.0 * intensity)),
-                        min(1.0, color[1] * (0.5 + 1.0 * intensity)),
-                        min(1.0, color[2] * (0.5 + 1.0 * intensity))
-                    )
-                
-                # Set material properties for better lighting
-                glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, (color[0], color[1], color[2], 1.0))
-                glMaterialfv(GL_FRONT, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
-                glMaterialf(GL_FRONT, GL_SHININESS, 100.0)
-                
-                # Set color
-                glColor4f(color[0], color[1], color[2], 1.0)
-                
-                # Draw a sphere with appropriate size based on segment type
-                if segment_type == 'head':
-                    # Make heads pulse with the music
-                    radius = 0.6  # Base size for head
-                    if audio_plugin:
-                        # Scale the radius based on audio intensity
-                        radius *= 0.8 + 0.4 * intensity
+            # Set up a stronger light for better visibility
+            glLightfv(GL_LIGHT0, GL_POSITION, (0, 10, 0, 1))
+            glLightfv(GL_LIGHT0, GL_AMBIENT, (0.4, 0.4, 0.4, 1))
+            glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1))
+            glLightfv(GL_LIGHT0, GL_SPECULAR, (1.0, 1.0, 1.0, 1))
+            
+            # Enable blending for transparency
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            
+            # Get audio plugin for beat synchronization
+            audio_plugin = None
+            for plugin in self.game.plugins:
+                if plugin.__class__.__name__ == "AudioPlugin" and plugin.active:
+                    audio_plugin = plugin
+                    break
+            
+            # Draw each snake
+            for snake_idx, snake in enumerate(self.snakes):
+                # Skip empty snakes
+                if not snake:
+                    continue
                     
-                    # Add glow effect that changes with the music
-                    if audio_plugin:
-                        glow_intensity = intensity * 0.5
-                        glMaterialfv(GL_FRONT, GL_EMISSION, (glow_intensity, glow_intensity * 0.5, 0.0, 1.0))
-                elif segment_type == 'rattle':
-                    radius = 0.5  # Medium rattles
-                    # Add a pulsing effect to rattles to make them more noticeable
-                    import math
-                    pulse = 0.2 * math.sin(time.time() * 5.0) + 0.8  # Pulsing between 0.6 and 1.0
-                    glColor4f(color[0] * pulse, color[1] * pulse, color[2] * pulse, 1.0)
-                    glMaterialfv(GL_FRONT, GL_EMISSION, (0.3, 0.0, 0.0, 1.0))  # Add glow to rattles
-                else:
-                    radius = 0.3  # Smaller body segments
+                self.add_debug_message(f"Snake {snake_idx} has {len(snake)} segments")  # Debug output
+                
+                if len(snake) < 2:
+                    continue  # Need at least 2 segments to draw connections
                     
-                # Create a sphere quadric object with higher quality
-                quadric = gluNewQuadric()
-                gluQuadricDrawStyle(quadric, GLU_FILL)
-                gluQuadricNormals(quadric, GLU_SMOOTH)
-                gluQuadricTexture(quadric, GL_TRUE)
-                gluSphere(quadric, radius, 24, 24)  # Higher resolution spheres
-                gluDeleteQuadric(quadric)
+                # Draw the connecting lines first (behind the balls)
+                glDisable(GL_LIGHTING)  # Disable lighting for lines
+                glLineWidth(5.0)  # Thicker lines for better visibility
                 
-                glPopMatrix()
+                # Draw lines with bright colors
+                glBegin(GL_LINE_STRIP)
+                for segment in snake:
+                    pos = segment['position']
+                    color = segment['color']
+                    # Make the line fully opaque
+                    glColor4f(color[0], color[1], color[2], 1.0)
+                    glVertex3f(pos[0], pos[1], pos[2])  # Use the correct position coordinates
+                glEnd()
                 
-        # Restore OpenGL state
-        glPopAttrib()
+                # Re-enable lighting for spheres
+                glEnable(GL_LIGHTING)
+                
+                # Now draw the balls (spheres) for each segment
+                for segment_idx, segment in enumerate(snake):
+                    pos = segment['position']
+                    color = segment['color']
+                    segment_type = segment['type']
+                    
+                    # Push matrix for this segment
+                    glPushMatrix()
+                    
+                    # Position the sphere
+                    glTranslatef(pos[0], pos[1], pos[2])  # Use the correct position coordinates
+                    
+                    # Get audio intensity for this snake (if audio plugin is active)
+                    intensity = 1.0
+                    if audio_plugin and segment_type == 'head':
+                        try:
+                            intensity = audio_plugin.get_snake_head_intensity(snake_idx)
+                            # Make the head pulse with the music
+                            color = (
+                                min(1.0, color[0] * (0.5 + 1.0 * intensity)),
+                                min(1.0, color[1] * (0.5 + 1.0 * intensity)),
+                                min(1.0, color[2] * (0.5 + 1.0 * intensity))
+                            )
+                        except Exception:
+                            # If there's an error getting intensity, just use default
+                            pass
+                    
+                    # Set material properties for better lighting
+                    glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, (color[0], color[1], color[2], 1.0))
+                    glMaterialfv(GL_FRONT, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
+                    glMaterialf(GL_FRONT, GL_SHININESS, 100.0)
+                    
+                    # Set color
+                    glColor4f(color[0], color[1], color[2], 1.0)
+                    
+                    # Draw a sphere with appropriate size based on segment type
+                    if segment_type == 'head':
+                        # Make heads pulse with the music
+                        radius = 0.6  # Base size for head
+                        if audio_plugin:
+                            # Scale the radius based on audio intensity
+                            radius *= 0.8 + 0.4 * intensity
+                        
+                        # Add glow effect that changes with the music
+                        if audio_plugin:
+                            glow_intensity = intensity * 0.5
+                            glMaterialfv(GL_FRONT, GL_EMISSION, (glow_intensity, glow_intensity * 0.5, 0.0, 1.0))
+                    elif segment_type == 'rattle':
+                        radius = 0.5  # Medium rattles
+                        # Add a pulsing effect to rattles to make them more noticeable
+                        import math
+                        pulse = 0.2 * math.sin(time.time() * 5.0) + 0.8  # Pulsing between 0.6 and 1.0
+                        glColor4f(color[0] * pulse, color[1] * pulse, color[2] * pulse, 1.0)
+                        glMaterialfv(GL_FRONT, GL_EMISSION, (0.3, 0.0, 0.0, 1.0))  # Add glow to rattles
+                    else:
+                        radius = 0.3  # Smaller body segments
+                        
+                    # Create a sphere quadric object with higher quality
+                    quadric = gluNewQuadric()
+                    gluQuadricDrawStyle(quadric, GLU_FILL)
+                    gluQuadricNormals(quadric, GLU_SMOOTH)
+                    gluQuadricTexture(quadric, GL_TRUE)
+                    gluSphere(quadric, radius, 16, 16)  # Higher resolution spheres
+                    gluDeleteQuadric(quadric)
+                    
+                    glPopMatrix()
+                    
+            # Restore OpenGL state
+            glPopAttrib()
+        except Exception as e:
+            # Log the error but don't crash
+            self.add_debug_message(f"Error drawing snakes: {e}")
     
     def draw_terrain_mesh(self):
         """Draw a mesh connecting the tips of the sticks to visualize the terrain surface."""
@@ -1168,58 +1190,63 @@ class GUI3DPlugin(Plugin):
         """Draw the ground plane."""
         # Draw a larger grid for the ground plane
         glDisable(GL_LIGHTING)
-        glColor3f(0.2, 0.2, 0.2)
         
-        # Draw a grid extending further
-        grid_size = 50  # Increased from 10
-        grid_step = 5   # Draw lines every 5 units for less clutter
-        
-        glBegin(GL_LINES)
-        for i in range(-grid_size, grid_size + 1, grid_step):
-            # Draw lines along X axis
-            glVertex3f(i, 0, -grid_size)
-            glVertex3f(i, 0, grid_size)
+        # Only draw the zero level grid if enabled
+        if self.show_zero_level_grid:
+            # Draw a grid at zero height
+            glColor3f(0.2, 0.2, 0.2)
             
-            # Draw lines along Z axis
-            glVertex3f(-grid_size, 0, i)
-            glVertex3f(grid_size, 0, i)
-        glEnd()
+            # Draw a grid extending further
+            grid_size = 50  # Increased from 10
+            grid_step = 5   # Draw lines every 5 units for less clutter
+            
+            glBegin(GL_LINES)
+            for i in range(-grid_size, grid_size + 1, grid_step):
+                # Draw lines along X axis
+                glVertex3f(i, 0, -grid_size)
+                glVertex3f(i, 0, grid_size)
+                
+                # Draw lines along Z axis
+                glVertex3f(-grid_size, 0, i)
+                glVertex3f(grid_size, 0, i)
+            glEnd()
         
         # Re-enable lighting
         glEnable(GL_LIGHTING)
         
         # Draw coordinate axes for better orientation
-        glBegin(GL_LINES)
-        
-        # X-axis (red)
-        glColor3f(1.0, 0.0, 0.0)
-        glVertex3f(0, 0, 0)
-        glVertex3f(5, 0, 0)
-        
-        # Y-axis (green)
-        glColor3f(0.0, 1.0, 0.0)
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 5, 0)
-        
-        # Z-axis (blue)
-        glColor3f(0.0, 0.0, 1.0)
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 5)
-        glEnd()
-        
-        # Draw a special marker at the center (0,0) to indicate player position
-        glBegin(GL_LINES)
-        glColor3f(1.0, 1.0, 0.0)  # Yellow
-        
-        # X marker
-        marker_size = 0.5
-        glVertex3f(-marker_size, 0, -marker_size)
-        glVertex3f(marker_size, 0, marker_size)
-        glVertex3f(-marker_size, 0, marker_size)
-        glVertex3f(marker_size, 0, -marker_size)
-        
-        glEnd()
-        
+        if self.show_axes:
+            glBegin(GL_LINES)
+            
+            # X-axis (red)
+            glColor3f(1.0, 0.0, 0.0)
+            glVertex3f(0, 0, 0)
+            glVertex3f(5, 0, 0)
+            
+            # Y-axis (green)
+            glColor3f(0.0, 1.0, 0.0)
+            glVertex3f(0, 0, 0)
+            glVertex3f(0, 5, 0)
+            
+            # Z-axis (blue)
+            glColor3f(0.0, 0.0, 1.0)
+            glVertex3f(0, 0, 0)
+            glVertex3f(0, 0, 5)
+            glEnd()
+            
+            # Draw a special marker at the center (0,0) to indicate player position
+            glBegin(GL_LINES)
+            glColor3f(1.0, 1.0, 0.0)  # Yellow
+            
+            # X marker
+            marker_size = 0.5
+            glVertex3f(-marker_size, 0, -marker_size)
+            glVertex3f(marker_size, 0, marker_size)
+            glVertex3f(-marker_size, 0, marker_size)
+            glVertex3f(marker_size, 0, -marker_size)
+            
+            glEnd()
+            
     def draw_axes(self):
         """Draw coordinate axes for better orientation."""
         # Disable lighting for clearer axes
@@ -1361,6 +1388,9 @@ class GUI3DPlugin(Plugin):
                 self.show_snake_connections = settings.get("show_snake_connections", True)
                 self.render_distance = settings.get("render_distance", 100)
                 self.show_axes = settings.get("show_axes", True)
+                self.show_zero_level_grid = settings.get("show_zero_level_grid", True)
+                self.ascii_intensity = settings.get("ascii_intensity", True)
+                self.ascii_height = settings.get("ascii_height", False)
         except:
             # Use default settings if file doesn't exist or is invalid
             pass
@@ -1382,7 +1412,10 @@ class GUI3DPlugin(Plugin):
                     "stick_dot_size": self.stick_dot_size,
                     "show_snake_connections": self.show_snake_connections,
                     "render_distance": self.render_distance,
-                    "show_axes": self.show_axes
+                    "show_axes": self.show_axes,
+                    "show_zero_level_grid": self.show_zero_level_grid,
+                    "ascii_intensity": self.ascii_intensity,
+                    "ascii_height": self.ascii_height
                 }
                 json.dump(settings, f)
         except:
@@ -1404,6 +1437,9 @@ class GUI3DPlugin(Plugin):
         original_show_snake_connections = self.show_snake_connections
         original_render_distance = self.render_distance
         original_show_axes = self.show_axes
+        original_show_zero_level_grid = self.show_zero_level_grid
+        original_ascii_intensity = self.ascii_intensity
+        original_ascii_height = self.ascii_height
         
         # Variables for menu navigation
         current_selection = 0
@@ -1417,55 +1453,63 @@ class GUI3DPlugin(Plugin):
             {"name": "Show Mesh", "value": self.show_mesh, "type": "bool"},
             {"name": "Show Terrain Mesh", "value": self.show_terrain_mesh, "type": "bool"},
             {"name": "Terrain Mesh Style", "value": self.terrain_mesh_style, "type": "str"},
-            {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float"},
+            {"name": "Terrain Mesh Opacity", "value": self.terrain_mesh_opacity, "type": "float", "min": 0.1, "max": 1.0, "step": 0.1},
             {"name": "Terrain Color Scheme", "value": self.terrain_color_scheme, "type": "str"},
-            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float"},
+            {"name": "Stick Dot Size", "value": self.stick_dot_size, "type": "float", "min": 1.0, "max": 20.0, "step": 1.0},
             {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"},
-            {"name": "Render Distance", "value": self.render_distance, "type": "int"},
-            {"name": "Show Axes", "value": self.show_axes, "type": "bool"}
+            {"name": "Render Distance", "value": self.render_distance, "type": "int", "min": 10, "max": 200, "step": 10},
+            {"name": "Show Axes", "value": self.show_axes, "type": "bool"},
+            {"name": "Show Zero Level Grid", "value": self.show_zero_level_grid, "type": "bool"},
+            {"name": "ASCII Intensity", "value": self.ascii_intensity, "type": "bool"},
+            {"name": "ASCII Height", "value": self.ascii_height, "type": "bool"},
+            {"name": "Save Settings", "value": None, "type": "button"},
+            {"name": "Cancel", "value": None, "type": "button"}
         ]
         
-        # Get curses module from the game
-        curses = self.game.curses
-        self.game.in_menu = True
-        self.game.needs_redraw = True
+        # Variables for menu navigation
+        current_selection = 0
+        in_menu = True
         
         # Main loop for settings menu
-        while in_settings_menu and self.game.running:
+        while in_menu:
             # Clear screen
             self.game.screen.clear()
             
             # Draw header
-            self.game.screen.addstr(1, 2, "3D Visualization Settings", curses.A_BOLD)
-            self.game.screen.addstr(3, 2, "Use UP/DOWN to navigate, SPACE to toggle/change, ENTER to save, ESC to cancel")
-            self.game.screen.addstr(4, 2, "Press 'R' to reset all settings to defaults")
+            self.game.screen.addstr(0, 0, "3D Visualization Settings", self.game.menu_color | curses.A_BOLD)
+            self.game.screen.addstr(1, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Draw instructions
+            self.game.screen.addstr(2, 0, "Use ↑/↓ to navigate, ENTER to toggle/edit, ←/→ to adjust values", self.game.menu_color)
+            self.game.screen.addstr(3, 0, "Press ESC to exit without saving", self.game.menu_color)
+            self.game.screen.addstr(4, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
             
             # Draw settings
             for i, setting in enumerate(settings):
                 # Highlight the selected item
                 if i == current_selection:
-                    attr = curses.A_REVERSE | curses.A_BOLD
+                    attr = self.game.menu_color | curses.A_BOLD
                 else:
-                    attr = 0
-                    
-                # Format the value display
-                if setting["type"] == "bool":
-                    value_display = "ON" if setting["value"] else "OFF"
-                elif setting["type"] == "float":
-                    value_display = f"{setting['value']:.1f}"
-                elif setting["type"] == "int":
-                    value_display = f"{setting['value']}"
-                else:
-                    value_display = setting["value"]
-                    
-                # Draw the setting
-                self.game.screen.addstr(6 + i, 4, setting["name"], attr)
-                self.game.screen.addstr(6 + i, 30, value_display, attr)
+                    attr = self.game.menu_color
                 
-            # Refresh the screen
+                # Draw the item
+                if setting["type"] == "bool":
+                    value_str = "Yes" if setting["value"] else "No"
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {value_str}", attr)
+                elif setting["type"] == "float" or setting["type"] == "int":
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
+                elif setting["type"] == "str":
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}: {setting['value']}", attr)
+                else:
+                    self.game.screen.addstr(i + 6, 2, f"{setting['name']}", attr)
+            
+            # Draw footer
+            self.game.screen.addstr(self.game.max_y - 2, 0, "═" * (self.game.max_x - 1), self.game.menu_color)
+            
+            # Refresh screen
             self.game.screen.refresh()
             
-            # Get user input
+            # Get input
             key = self.game.screen.getch()
             
             # Handle input
@@ -1473,77 +1517,98 @@ class GUI3DPlugin(Plugin):
                 current_selection = (current_selection - 1) % len(settings)
             elif key == curses.KEY_DOWN:
                 current_selection = (current_selection + 1) % len(settings)
-            elif key == ord(' '):  # Space key
-                # Toggle boolean value or cycle through string options
-                if settings[current_selection]["type"] == "bool":
-                    settings[current_selection]["value"] = not settings[current_selection]["value"]
-                elif settings[current_selection]["type"] == "str" and settings[current_selection]["name"] == "Terrain Mesh Style":
-                    # Cycle through mesh style options
-                    if settings[current_selection]["value"] == "filled":
-                        settings[current_selection]["value"] = "wireframe"
-                    else:
-                        settings[current_selection]["value"] = "filled"
-                elif settings[current_selection]["type"] == "str" and settings[current_selection]["name"] == "Terrain Color Scheme":
-                    # Cycle through color scheme options
-                    if settings[current_selection]["value"] == "height":
-                        settings[current_selection]["value"] = "viridis"
-                    elif settings[current_selection]["value"] == "viridis":
-                        settings[current_selection]["value"] = "viridis_inverted"
-                    elif settings[current_selection]["value"] == "viridis_inverted":
-                        settings[current_selection]["value"] = "plasma"
-                    elif settings[current_selection]["value"] == "plasma":
-                        settings[current_selection]["value"] = "inferno"
-                    elif settings[current_selection]["value"] == "inferno":
-                        settings[current_selection]["value"] = "magma"
-                    elif settings[current_selection]["value"] == "magma":
-                        settings[current_selection]["value"] = "cividis"
-                    else:
-                        settings[current_selection]["value"] = "height"
-                elif settings[current_selection]["type"] == "float":
-                    # Adjust opacity value
-                    if settings[current_selection]["value"] < 10.0:
-                        settings[current_selection]["value"] += 0.1
-                    else:
-                        settings[current_selection]["value"] = 0.0
-                elif settings[current_selection]["type"] == "int":
-                    # Adjust render distance value
-                    if settings[current_selection]["value"] < 1000:
-                        settings[current_selection]["value"] += 10
-                    else:
-                        settings[current_selection]["value"] = 100
-            elif key == ord('r') or key == ord('R'):
-                # Reset to defaults
-                for setting in settings:
-                    if setting["type"] == "bool":
-                        setting["value"] = True
-                    elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
-                        setting["value"] = "filled"
-                    elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
-                        setting["value"] = "height"
-                    elif setting["type"] == "float":
-                        setting["value"] = 8.0 if setting["name"] == "Stick Dot Size" else 0.7
-                    elif setting["type"] == "int":
-                        setting["value"] = 100
             elif key == 10:  # Enter key
-                # Apply changes
-                self.show_letters = settings[0]["value"]
-                self.show_sticks = settings[1]["value"]
-                self.show_dots_without_sticks = settings[2]["value"]
-                self.show_mesh = settings[3]["value"]
-                self.show_terrain_mesh = settings[4]["value"]
-                self.terrain_mesh_style = settings[5]["value"]
-                self.terrain_mesh_opacity = settings[6]["value"]
-                self.terrain_color_scheme = settings[7]["value"]
-                self.stick_dot_size = settings[8]["value"]
-                self.show_snake_connections = settings[9]["value"]
-                self.render_distance = settings[10]["value"]
-                self.show_axes = settings[11]["value"]
-                
-                # Save settings
-                self.save_settings()
-                
-                # Exit menu
-                in_settings_menu = False
+                # Handle selection
+                setting = settings[current_selection]
+                if setting["type"] == "bool":
+                    # Toggle boolean value
+                    setting["value"] = not setting["value"]
+                elif setting["type"] == "button":
+                    if setting["name"] == "Save Settings":
+                        # Save settings
+                        self.show_letters = settings[0]["value"]
+                        self.show_sticks = settings[1]["value"]
+                        self.show_dots_without_sticks = settings[2]["value"]
+                        self.show_mesh = settings[3]["value"]
+                        self.show_terrain_mesh = settings[4]["value"]
+                        self.terrain_mesh_style = settings[5]["value"]
+                        self.terrain_mesh_opacity = settings[6]["value"]
+                        self.terrain_color_scheme = settings[7]["value"]
+                        self.stick_dot_size = settings[8]["value"]
+                        self.show_snake_connections = settings[9]["value"]
+                        self.render_distance = settings[10]["value"]
+                        self.show_axes = settings[11]["value"]
+                        self.show_zero_level_grid = settings[12]["value"]
+                        self.ascii_intensity = settings[13]["value"]
+                        self.ascii_height = settings[14]["value"]
+                        self.save_settings()
+                        in_menu = False
+                    elif setting["name"] == "Cancel":
+                        # Restore original settings
+                        self.show_letters = original_show_letters
+                        self.show_sticks = original_show_sticks
+                        self.show_dots_without_sticks = original_show_dots_without_sticks
+                        self.show_mesh = original_show_mesh
+                        self.show_terrain_mesh = original_show_terrain_mesh
+                        self.terrain_mesh_style = original_terrain_mesh_style
+                        self.terrain_mesh_opacity = original_terrain_mesh_opacity
+                        self.terrain_color_scheme = original_terrain_color_scheme
+                        self.stick_dot_size = original_stick_dot_size
+                        self.show_snake_connections = original_show_snake_connections
+                        self.render_distance = original_render_distance
+                        self.show_axes = original_show_axes
+                        self.show_zero_level_grid = original_show_zero_level_grid
+                        self.ascii_intensity = original_ascii_intensity
+                        self.ascii_height = original_ascii_height
+                        in_menu = False
+            elif key == curses.KEY_LEFT:
+                # Decrease value
+                setting = settings[current_selection]
+                if setting["type"] == "float":
+                    # Check if min and step exist, use defaults if not
+                    min_val = setting.get("min", 0.0)
+                    step = setting.get("step", 0.1)
+                    setting["value"] = max(min_val, setting["value"] - step)
+                elif setting["type"] == "int":
+                    # Check if min and step exist, use defaults if not
+                    min_val = setting.get("min", 0)
+                    step = setting.get("step", 1)
+                    setting["value"] = max(min_val, setting["value"] - step)
+                elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
+                    # Cycle through mesh style options
+                    if setting["value"] == "filled":
+                        setting["value"] = "wireframe"
+                    else:
+                        setting["value"] = "filled"
+                elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
+                    # Cycle through color scheme options
+                    schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
+                    idx = schemes.index(setting["value"])
+                    setting["value"] = schemes[(idx - 1) % len(schemes)]
+            elif key == curses.KEY_RIGHT:
+                # Increase value
+                setting = settings[current_selection]
+                if setting["type"] == "float":
+                    # Check if max and step exist, use defaults if not
+                    max_val = setting.get("max", 10.0)
+                    step = setting.get("step", 0.1)
+                    setting["value"] = min(max_val, setting["value"] + step)
+                elif setting["type"] == "int":
+                    # Check if max and step exist, use defaults if not
+                    max_val = setting.get("max", 100)
+                    step = setting.get("step", 1)
+                    setting["value"] = min(max_val, setting["value"] + step)
+                elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
+                    # Cycle through mesh style options
+                    if setting["value"] == "wireframe":
+                        setting["value"] = "filled"
+                    else:
+                        setting["value"] = "wireframe"
+                elif setting["type"] == "str" and setting["name"] == "Terrain Color Scheme":
+                    # Cycle through color scheme options
+                    schemes = ["height", "viridis", "viridis_inverted", "plasma", "inferno", "magma", "cividis"]
+                    idx = schemes.index(setting["value"])
+                    setting["value"] = schemes[(idx + 1) % len(schemes)]
             elif key == 27:  # Escape key
                 # Restore original settings
                 self.show_letters = original_show_letters
@@ -1558,14 +1623,14 @@ class GUI3DPlugin(Plugin):
                 self.show_snake_connections = original_show_snake_connections
                 self.render_distance = original_render_distance
                 self.show_axes = original_show_axes
-                
-                # Exit without saving
-                in_settings_menu = False
+                self.show_zero_level_grid = original_show_zero_level_grid
+                self.ascii_intensity = original_ascii_intensity
+                self.ascii_height = original_ascii_height
+                in_menu = False
         
-        # Restore game state
-        self.game.in_menu = True
+        # Force redraw
         self.game.needs_redraw = True
-    
+
     def show_key_bindings_menu(self):
         """Show the key bindings menu for the 3D GUI."""
         # Store original key bindings in case user cancels
@@ -1793,58 +1858,76 @@ class GUI3DPlugin(Plugin):
             
     def draw_vertical_lines(self):
         """Draw vertical lines from ground to character height."""
-        # Disable texturing
-        glDisable(GL_TEXTURE_2D)
-        
-        # Make a copy of the characters dictionary to avoid modification during iteration
-        with self.lock:
-            characters_copy = dict(self.characters)
+        try:
+            # Disable texturing
+            glDisable(GL_TEXTURE_2D)
             
-        # Extend the rendering distance
-        render_range = self.render_distance // 2
-        
-        # Draw all vertical lines first (if enabled)
-        if self.show_sticks:
-            # Draw vertical lines from ground to character height
-            glLineWidth(1.0)
-            glBegin(GL_LINES)
-            for char_key, char_obj in characters_copy.items():
-                # Skip if the character is too far away
-                if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
-                    continue
-                    
-                # Set color based on height and color scheme
-                color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
-                glColor3f(*color)
+            # Make a copy of the characters dictionary to avoid modification during iteration
+            with self.lock:
+                characters_copy = dict(self.characters)
                 
-                # Draw line from ground to character height
-                glVertex3f(char_obj.x, 0, char_obj.y)
-                glVertex3f(char_obj.x, char_obj.height, char_obj.y)
-            glEnd()
-        
-        # Now draw dots at the end of each stick if enabled
-        if self.stick_dot_size > 0:
-            # Enable point sprites for better dots
-            glEnable(GL_POINT_SMOOTH)
-            glPointSize(self.stick_dot_size)
+            # Extend the rendering distance
+            render_range = self.render_distance // 2
             
-            glBegin(GL_POINTS)
-            for char_key, char_obj in characters_copy.items():
-                # Skip if the character is too far away
-                if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
-                    continue
+            # Draw all vertical lines first (if enabled)
+            if self.show_sticks:
+                # Draw vertical lines from ground to character height
+                glLineWidth(1.0)
+                glBegin(GL_LINES)
+                for char_key, char_obj in characters_copy.items():
+                    # Skip if the character is too far away
+                    if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                        continue
+                        
+                    # Set color based on height and color scheme
+                    color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+                    glColor3f(*color)
                     
-                # Set color based on height and color scheme
-                color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
-                glColor3f(*color)
-                
-                # Draw dot at the top of the line
-                glVertex3f(char_obj.x, char_obj.height, char_obj.y)
-            glEnd()
+                    # Draw line from ground to character height
+                    glVertex3f(char_obj.x, 0, char_obj.y)
+                    glVertex3f(char_obj.x, char_obj.height, char_obj.y)
+                glEnd()
             
-            # Disable point sprites
-            glDisable(GL_POINT_SMOOTH)
-
+            # Now draw dots at the end of each stick if enabled
+            if self.stick_dot_size > 0:
+                # Enable point sprites for better dots
+                glEnable(GL_POINT_SMOOTH)
+                
+                # Set point size once before the loop - this is the key fix
+                # We'll use the maximum size and adjust color intensity instead
+                glPointSize(self.stick_dot_size)
+                
+                # Draw all dots in a single batch for better performance
+                glBegin(GL_POINTS)
+                for char_key, char_obj in characters_copy.items():
+                    # Skip if the character is too far away
+                    if abs(char_obj.x) > render_range or abs(char_obj.y) > render_range:
+                        continue
+                    
+                    # Set color based on height and color scheme
+                    color = self.get_color_from_scheme(char_obj.height, self.terrain_color_scheme)
+                    
+                    # Adjust color intensity based on ASCII value if enabled
+                    if self.ascii_intensity and hasattr(char_obj, 'char'):
+                        # Get ASCII value and normalize it between 0.3 and 1.0
+                        ascii_value = ord(char_obj.char) if char_obj.char else 32
+                        intensity = 0.3 + (ascii_value / 255.0) * 0.7
+                        
+                        # Adjust color intensity instead of point size
+                        color = (color[0] * intensity, color[1] * intensity, color[2] * intensity)
+                    
+                    glColor3f(*color)
+                    
+                    # Draw dot at the top of the line
+                    glVertex3f(char_obj.x, char_obj.height, char_obj.y)
+                glEnd()
+                
+                # Disable point sprites
+                glDisable(GL_POINT_SMOOTH)
+        except Exception as e:
+            # Log the error but don't crash
+            self.add_debug_message(f"Error drawing lines: {e}")
+    
     def show_3d_settings_menu(self):
         """Show the 3D settings menu."""
         # Store original settings in case user cancels
@@ -1860,8 +1943,15 @@ class GUI3DPlugin(Plugin):
         original_show_snake_connections = self.show_snake_connections
         original_render_distance = self.render_distance
         original_show_axes = self.show_axes
+        original_show_zero_level_grid = self.show_zero_level_grid
+        original_ascii_intensity = self.ascii_intensity
+        original_ascii_height = self.ascii_height
         
-        # Create a list of settings
+        # Variables for menu navigation
+        current_selection = 0
+        in_settings_menu = True
+        
+        # Create settings list
         settings = [
             {"name": "Show Letters", "value": self.show_letters, "type": "bool"},
             {"name": "Show Sticks", "value": self.show_sticks, "type": "bool"},
@@ -1875,6 +1965,9 @@ class GUI3DPlugin(Plugin):
             {"name": "Show Snake Connections", "value": self.show_snake_connections, "type": "bool"},
             {"name": "Render Distance", "value": self.render_distance, "type": "int", "min": 10, "max": 200, "step": 10},
             {"name": "Show Axes", "value": self.show_axes, "type": "bool"},
+            {"name": "Show Zero Level Grid", "value": self.show_zero_level_grid, "type": "bool"},
+            {"name": "ASCII Intensity", "value": self.ascii_intensity, "type": "bool"},
+            {"name": "ASCII Height", "value": self.ascii_height, "type": "bool"},
             {"name": "Save Settings", "value": None, "type": "button"},
             {"name": "Cancel", "value": None, "type": "button"}
         ]
@@ -1951,6 +2044,9 @@ class GUI3DPlugin(Plugin):
                         self.show_snake_connections = settings[9]["value"]
                         self.render_distance = settings[10]["value"]
                         self.show_axes = settings[11]["value"]
+                        self.show_zero_level_grid = settings[12]["value"]
+                        self.ascii_intensity = settings[13]["value"]
+                        self.ascii_height = settings[14]["value"]
                         self.save_settings()
                         in_menu = False
                     elif setting["name"] == "Cancel":
@@ -1967,14 +2063,23 @@ class GUI3DPlugin(Plugin):
                         self.show_snake_connections = original_show_snake_connections
                         self.render_distance = original_render_distance
                         self.show_axes = original_show_axes
+                        self.show_zero_level_grid = original_show_zero_level_grid
+                        self.ascii_intensity = original_ascii_intensity
+                        self.ascii_height = original_ascii_height
                         in_menu = False
             elif key == curses.KEY_LEFT:
                 # Decrease value
                 setting = settings[current_selection]
                 if setting["type"] == "float":
-                    setting["value"] = max(setting["min"], setting["value"] - setting["step"])
+                    # Check if min and step exist, use defaults if not
+                    min_val = setting.get("min", 0.0)
+                    step = setting.get("step", 0.1)
+                    setting["value"] = max(min_val, setting["value"] - step)
                 elif setting["type"] == "int":
-                    setting["value"] = max(setting["min"], setting["value"] - setting["step"])
+                    # Check if min and step exist, use defaults if not
+                    min_val = setting.get("min", 0)
+                    step = setting.get("step", 1)
+                    setting["value"] = max(min_val, setting["value"] - step)
                 elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
                     # Cycle through mesh style options
                     if setting["value"] == "filled":
@@ -1990,9 +2095,15 @@ class GUI3DPlugin(Plugin):
                 # Increase value
                 setting = settings[current_selection]
                 if setting["type"] == "float":
-                    setting["value"] = min(setting["max"], setting["value"] + setting["step"])
+                    # Check if max and step exist, use defaults if not
+                    max_val = setting.get("max", 10.0)
+                    step = setting.get("step", 0.1)
+                    setting["value"] = min(max_val, setting["value"] + step)
                 elif setting["type"] == "int":
-                    setting["value"] = min(setting["max"], setting["value"] + setting["step"])
+                    # Check if max and step exist, use defaults if not
+                    max_val = setting.get("max", 100)
+                    step = setting.get("step", 1)
+                    setting["value"] = min(max_val, setting["value"] + step)
                 elif setting["type"] == "str" and setting["name"] == "Terrain Mesh Style":
                     # Cycle through mesh style options
                     if setting["value"] == "wireframe":
@@ -2018,6 +2129,9 @@ class GUI3DPlugin(Plugin):
                 self.show_snake_connections = original_show_snake_connections
                 self.render_distance = original_render_distance
                 self.show_axes = original_show_axes
+                self.show_zero_level_grid = original_show_zero_level_grid
+                self.ascii_intensity = original_ascii_intensity
+                self.ascii_height = original_ascii_height
                 in_menu = False
         
         # Force redraw

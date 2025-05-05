@@ -21,10 +21,10 @@ DEFAULT_TERMINAL_KEYS = {
 DEFAULT_GUI_KEYS = {
     "move_forward": pygame.K_UP,
     "move_backward": pygame.K_DOWN,
-    "strafe_left": pygame.K_LEFT,
-    "strafe_right": pygame.K_RIGHT,
-    "rotate_ccw": pygame.K_q,
-    "rotate_cw": pygame.K_e,
+    "strafe_left": pygame.K_q,
+    "strafe_right": pygame.K_e,
+    "rotate_ccw": pygame.K_LEFT,
+    "rotate_cw": pygame.K_RIGHT,
 }
 
 # Key name mappings for display
