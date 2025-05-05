@@ -696,9 +696,11 @@ class GUI3DPlugin(Plugin):
                             prev_rotation_y = self.rotation_y
                             prev_zoom = self.zoom
                             
-                            # Get current window info
+                            # Get current window info and player position
                             prev_width = pygame.display.Info().current_w
                             prev_height = pygame.display.Info().current_h
+                            prev_player_x = self.game.world_x
+                            prev_player_y = self.game.world_y
                             
                             # Toggle fullscreen mode
                             if self.is_fullscreen:
@@ -717,6 +719,41 @@ class GUI3DPlugin(Plugin):
                             # Adjust zoom to maintain the same view with the new aspect ratio
                             aspect_ratio_change = new_aspect / prev_aspect
                             self.zoom = prev_zoom * math.sqrt(aspect_ratio_change)
+                            
+                            # Calculate screen center offset
+                            # This determines how much to adjust the view to center the grid
+                            if self.is_fullscreen:
+                                # When going to fullscreen, we want to center the view on (0,0,0)
+                                # Save the current position so we can restore it later
+                                if not hasattr(self, 'saved_position'):
+                                    self.saved_position = None
+                                
+                                self.saved_position = (prev_player_x, prev_player_y)
+                                
+                                # Reset the world position to center the grid
+                                self.game.world_x = 0
+                                self.game.world_y = 0
+                                
+                                # Force update of character map to reflect the new centered position
+                                self.update_character_map()
+                                self.check_for_snakes()
+                                
+                                # Add a debug message with centering information
+                                self.add_debug_message(f"Fullscreen: Grid centered at (0,0)")
+                            else:
+                                # When returning to windowed mode, restore the saved position
+                                if hasattr(self, 'saved_position') and self.saved_position:
+                                    self.game.world_x, self.game.world_y = self.saved_position
+                                    
+                                    # Force update of character map to reflect the restored position
+                                    self.update_character_map()
+                                    self.check_for_snakes()
+                                    
+                                    self.add_debug_message(f"Windowed: Position restored to ({self.game.world_x:.1f}, {self.game.world_y:.1f})")
+                                    self.saved_position = None
+                                else:
+                                    # If no saved position, just show window dimensions
+                                    self.add_debug_message(f"Windowed: {new_width}x{new_height}")
                             
                             # Reinitialize OpenGL context after changing display mode
                             glEnable(GL_DEPTH_TEST)
@@ -748,9 +785,6 @@ class GUI3DPlugin(Plugin):
                             glRotatef(self.rotation_x, 1, 0, 0)
                             glRotatef(self.rotation_y, 0, 1, 0)
                             glRotatef(self.rotation_z, 0, 0, 1)
-                            
-                            # Add a debug message about fullscreen toggle
-                            self.add_debug_message(f"Fullscreen: {self.is_fullscreen} ({new_width}x{new_height})")
                 
                 # Handle keyboard input for camera-relative movement
                 if self.handle_3d_input:
