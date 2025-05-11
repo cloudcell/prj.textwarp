@@ -1483,7 +1483,7 @@ class TextAdventure:
                 
         if gui3d_plugin:
             # Show the 3D settings menu
-            gui3d_plugin.show_3d_settings_menu()
+            gui3d_plugin.show_settings_menu()
         else:
             # Show message that plugin is not found
             self.message = "3D GUI plugin not found"
